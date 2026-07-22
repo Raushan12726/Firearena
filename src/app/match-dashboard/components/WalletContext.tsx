@@ -134,7 +134,6 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       return false;
     }
 
-    // 🚀 STRICT AUTH CHECK: Direct database se user verify karein
     const { data: authData, error: authError } = await supabase.auth.getUser();
     
     if (authError || !authData?.user?.id) {
@@ -142,7 +141,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       return false;
     }
 
-    const currentUserId = authData.user.id; // Yahan strict ID li ja rahi hai jisse foreign key error nahi aayega
+    const currentUserId = authData.user.id;
 
     const { data: profileData } = await supabase
       .from('profiles')
@@ -154,6 +153,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     const currentAvailableBalance = Number(profileData?.wallet_balance || balance);
 
     if (type === 'deposit') {
+      // 🚀 Deposit ke waqt sirf request save hogi, balance update nahi hoga
       const insertPayload = {
         user_id: currentUserId,
         type: 'deposit',
@@ -165,7 +165,6 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
 
       let { error } = await supabase.from('transactions').insert([insertPayload]);
 
-      // Agar column name ka issue ho toh fallback run karega
       if (error && error.message.includes('column')) {
         const fallbackPayload = {
           user_id: currentUserId,
@@ -218,7 +217,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
         return false;
       }
 
-      // 🚀 Withdrawal request successful hote hi available balance me se amount minus kar dein
+      // Withdrawal mein balance turant minus hoga kyunki paise user ne nikal liye hain
       const newBalance = currentAvailableBalance - amount;
       const { error: updateError } = await supabase
         .from('profiles')
