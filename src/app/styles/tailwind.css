@@ -1,0 +1,21 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* 🌟 Aapke Custom Neon Styles aur Buttons yahan daal lo */
+@layer components {
+  /* Neon Cyan Button for Deposit/Withdraw */
+  .btn-neon-cyan {
+    @apply border border-cyan-500/50 text-cyan-400 bg-cyan-500/10 hover:bg-cyan-500/20 active:scale-95 transition-all duration-200 shadow-[0_0_15px_rgba(6,182,212,0.15)];
+  }
+
+  /* Neon Orange Button for Add Money */
+  .btn-neon-orange {
+    @apply border border-orange-500/50 text-orange-400 bg-orange-500/10 hover:bg-orange-500/20 active:scale-95 transition-all duration-200 shadow-[0_0_15px_rgba(249,115,22,0.15)];
+  }
+
+  /* Gradient border line ke liye */
+  .gradient-cyan-orange {
+    @apply bg-gradient-to-r from-cyan-500 via-purple-500 to-orange-500;
+  }
+}
