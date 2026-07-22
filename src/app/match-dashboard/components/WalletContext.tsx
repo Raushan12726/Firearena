@@ -129,15 +129,20 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     amount: number, 
     utrOrUpiId?: string
   ): Promise<boolean> => {
-    if (amount <= 0) return false;
-
-    const { data: { user } } = await supabase.auth.getUser();
-    const currentUserId = user?.id || userId;
-
-    if (!currentUserId) {
-      alert("User logged in nahi hai!");
+    if (amount <= 0) {
+      alert("Invalid amount!");
       return false;
     }
+
+    // 🚀 STRICT AUTH CHECK: Direct database se user verify karein
+    const { data: authData, error: authError } = await supabase.auth.getUser();
+    
+    if (authError || !authData?.user?.id) {
+      alert("Aapka session expire ho gaya hai, kripya wapas login karein!");
+      return false;
+    }
+
+    const currentUserId = authData.user.id; // Yahan strict ID li ja rahi hai jisse foreign key error nahi aayega
 
     const { data: profileData } = await supabase
       .from('profiles')
@@ -145,7 +150,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       .eq('id', currentUserId)
       .single();
 
-    const playerName = profileData?.username || profileData?.name || user?.email?.split('@')[0] || 'Player';
+    const playerName = profileData?.username || profileData?.name || authData.user?.email?.split('@')[0] || 'Player';
     const currentAvailableBalance = Number(profileData?.wallet_balance || balance);
 
     if (type === 'deposit') {
@@ -160,6 +165,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
 
       let { error } = await supabase.from('transactions').insert([insertPayload]);
 
+      // Agar column name ka issue ho toh fallback run karega
       if (error && error.message.includes('column')) {
         const fallbackPayload = {
           user_id: currentUserId,
@@ -229,7 +235,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     fetchTransactions(currentUserId);
     fetchBalance(currentUserId);
     return true;
-  }, [userId, balance, fetchTransactions, fetchBalance]);
+  }, [balance, fetchTransactions, fetchBalance]);
 
   return (
     <WalletContext.Provider value={{ balance, transactions, fetchBalance, fetchTransactions, addTransaction, supabase }}>
