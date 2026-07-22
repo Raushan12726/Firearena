@@ -6,7 +6,6 @@ import MatchFilters from './MatchFilters';
 import MatchGrid from './MatchGrid';
 import WalletWidget from './WalletWidget';
 import LeaderboardPanel from './LeaderboardPanel';
-import GlobalChat from './GlobalChat';
 import WalletTopupModal from './WalletModal';
 
 // ─── Supabase Client Initialization ──────────────────────────────────────────
@@ -253,7 +252,6 @@ export default function MatchDashboardContent() {
         <div className="xl:col-span-1 space-y-5">
           <WalletWidget onAddFunds={() => setWalletOpen(true)} />
           <LeaderboardPanel />
-          <GlobalChat />
         </div>
       </div>
 
