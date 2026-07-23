@@ -1,7 +1,7 @@
 'use client';
 import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { Lock, Eye, EyeOff, AlertTriangle } from 'lucide-react';
+import { Lock, Eye, EyeOff, AlertTriangle, Trophy, Target } from 'lucide-react';
 import { supabase } from '@/lib/supabaseClient';
 import { useWallet } from './WalletContext';
 
@@ -28,6 +28,12 @@ export default function MatchDetailModal({ match, onClose, initialTab = 'info' }
   const [currentMatchData, setCurrentMatchData] = useState<any>(match);
 
   const entryFee = Number(match?.entry_fee || match?.entryFee) || 0;
+
+  // Prizes Extractions with fallbacks
+  const firstPlace = currentMatchData?.first_place ?? currentMatchData?.first_prize ?? match?.first_prize ?? match?.firstPlace ?? 0;
+  const secondPlace = currentMatchData?.second_place ?? currentMatchData?.second_prize ?? match?.second_prize ?? match?.secondPlace ?? 0;
+  const thirdPlace = currentMatchData?.third_place ?? currentMatchData?.third_prize ?? match?.third_prize ?? match?.thirdPlace ?? 0;
+  const perKill = currentMatchData?.per_kill ?? currentMatchData?.perKill ?? match?.perKill ?? match?.per_kill_bonus ?? 0;
 
   useEffect(() => {
     setMounted(true);
@@ -270,7 +276,38 @@ export default function MatchDetailModal({ match, onClose, initialTab = 'info' }
                 </div>
               </div>
 
-              {/* ✨ HIGHLIGHTED NOTICE BOX (Added right below Map & Prize Pool) */}
+              {/* 🏆 PRIZE DISTRIBUTION BREAKDOWN */}
+              <div className="bg-neutral-950 p-3 rounded-xl border border-neutral-800 space-y-2">
+                <p className="text-xs font-bold text-neutral-300 flex items-center gap-1.5">
+                  <Trophy size={14} className="text-amber-400" /> Prize Distribution
+                </p>
+                <div className="grid grid-cols-3 gap-2 text-center text-xs">
+                  <div className="bg-neutral-900/80 p-2 rounded-lg border border-neutral-800">
+                    <span className="text-[10px] text-amber-400 font-semibold block">🥇 1st Place</span>
+                    <span className="font-bold text-white text-sm">₹{firstPlace}</span>
+                  </div>
+                  <div className="bg-neutral-900/80 p-2 rounded-lg border border-neutral-800">
+                    <span className="text-[10px] text-neutral-300 font-semibold block">🥈 2nd Place</span>
+                    <span className="font-bold text-white text-sm">₹{secondPlace}</span>
+                  </div>
+                  <div className="bg-neutral-900/80 p-2 rounded-lg border border-neutral-800">
+                    <span className="text-[10px] text-amber-600 font-semibold block">🥉 3rd Place</span>
+                    <span className="font-bold text-white text-sm">₹{thirdPlace}</span>
+                  </div>
+                </div>
+
+                {/* Per Kill Bonus */}
+                {Number(perKill) > 0 && (
+                  <div className="bg-neutral-900/50 p-2 rounded-lg border border-neutral-800/80 flex items-center justify-between text-xs mt-1">
+                    <span className="text-neutral-400 flex items-center gap-1.5 text-[11px]">
+                      <Target size={12} className="text-red-400" /> Per Kill Bonus
+                    </span>
+                    <span className="font-bold text-red-400">₹{perKill} / Kill</span>
+                  </div>
+                )}
+              </div>
+
+              {/* ✨ HIGHLIGHTED NOTICE BOX */}
               <div className="bg-amber-950/30 border border-amber-500/40 rounded-xl p-3 text-xs space-y-2">
                 <div className="flex items-center gap-1.5 text-amber-400 font-bold uppercase tracking-wider text-[11px]">
                   <AlertTriangle size={14} /> Important Notice:
@@ -300,17 +337,51 @@ export default function MatchDetailModal({ match, onClose, initialTab = 'info' }
             </div>
           )}
 
+          {/* PLAYERS TAB */}
           {activeTab === 'players' && (
-            <div className="space-y-1.5">
+            <div className="space-y-2 mt-1">
               {registeredPlayers.length === 0 ? (
                 <p className="text-center py-6 text-xs text-neutral-500">No players joined yet.</p>
               ) : (
-                registeredPlayers.map((p, idx) => (
-                  <div key={idx} className="flex justify-between items-center bg-neutral-950/60 border border-neutral-800/60 p-2.5 rounded-lg text-xs">
-                    <span className="font-bold text-neutral-300">{idx + 1}. {p.player_name}</span>
-                    <span className="font-mono bg-neutral-900 px-2 py-0.5 rounded text-neutral-400 text-[11px]">ID: {p.player_uid}</span>
-                  </div>
-                ))
+                registeredPlayers.map((p, idx) => {
+                  const winning = Number(p.prize_earned || p.winning_amount || 0);
+                  const kills = Number(p.kills || 0);
+                  const placement = p.placement;
+
+                  return (
+                    <div key={idx} className="flex flex-wrap justify-between items-center bg-neutral-950/60 border border-neutral-800/60 p-2.5 rounded-lg text-xs">
+                      
+                      <div className="flex flex-col">
+                        <span className="font-bold text-neutral-300 text-[13px]">{idx + 1}. {p.player_name}</span>
+                        <span className="font-mono text-neutral-500 text-[10px] mt-0.5">ID: {p.player_uid}</span>
+                      </div>
+
+                      <div className="flex items-center gap-1.5 mt-2 sm:mt-0">
+                        {placement && (
+                          <span className="text-[10px] uppercase font-bold text-neutral-400 bg-neutral-900 border border-neutral-800 px-1.5 py-0.5 rounded">
+                            Rank #{placement}
+                          </span>
+                        )}
+                        
+                        {kills > 0 && (
+                          <span className="bg-red-500/10 text-red-400 border border-red-500/20 text-[10px] px-1.5 py-0.5 rounded font-bold">
+                            ⚔️ {kills}
+                          </span>
+                        )}
+
+                        {winning > 0 ? (
+                          <span className="bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-[11px] px-2 py-0.5 rounded-md font-bold">
+                            🏆 ₹{winning}
+                          </span>
+                        ) : (
+                          match.status === 'Completed' && winning === 0 && (
+                            <span className="text-neutral-600 text-[10px] italic bg-neutral-900 px-2 py-0.5 rounded">No Prize</span>
+                          )
+                        )}
+                      </div>
+                    </div>
+                  );
+                })
               )}
             </div>
           )}

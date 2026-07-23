@@ -1,6 +1,6 @@
 'use client';
 import React, { useState, useEffect } from 'react';
-import { Toaster } from 'sonner';
+import { Toaster, toast } from 'sonner';
 import { createClient } from '@supabase/supabase-js';
 import MatchFilters from './MatchFilters';
 import MatchGrid from './MatchGrid';
@@ -71,7 +71,7 @@ export default function MatchDashboardContent() {
     avatar: '🎯',
   });
 
-  // Fetch Logged-in User Data & Sync Matches Slots from Supabase
+  // Fetch Logged-in User Data & Sync Matches from Supabase
   useEffect(() => {
     const loadUserDataAndMatches = async () => {
       // 1. Fetch live user session from Supabase
@@ -109,31 +109,50 @@ export default function MatchDashboardContent() {
         }
       }
 
-      // 3. Sync matches filled slots from Supabase match_participants table
+      // 3. Fetch Matches directly from Supabase and sync with localStorage for MatchGrid
       try {
-        const savedMatches = localStorage.getItem('firearena_matches');
-        if (savedMatches) {
-          const parsedMatches: Match[] = JSON.parse(savedMatches);
-          
-          // Loop through matches and update filled slots based on actual participants table
-          const updatedMatches = await Promise.all(
-            parsedMatches.map(async (m) => {
-              const { count, error } = await supabase
-                .from('match_participants')
+        const { data: dbMatches, error } = await supabase
+          .from('matches')
+          .select('*')
+          .order('created_at', { ascending: false });
+
+        if (!error && dbMatches) {
+          const formattedMatches: Match[] = await Promise.all(
+            dbMatches.map(async (m: any) => {
+              // Count filled slots from match_players or match_participants
+              const { count } = await supabase
+                .from('match_players')
                 .select('*', { count: 'exact', head: true })
                 .eq('match_id', m.id);
 
-              if (!error && count !== null) {
-                return { ...m, filledSlots: count, filled_slots: count };
-              }
-              return m;
+              return {
+                id: String(m.id),
+                title: m.title || m.name || 'Tournament Match',
+                mode: (m.mode || 'Classic') as MatchMode,
+                status: (m.status || 'Registration Open') as MatchStatus,
+                entryFee: Number(m.entry_fee || 0),
+                prizePool: Number(m.prize_pool || 0),
+                totalSlots: Number(m.total_slots || 50),
+                filledSlots: count || Number(m.filled_slots || 0),
+                date: m.date || 'Today',
+                time: m.time || m.start_time || '00:00',
+                map: m.map || 'Bermuda',
+                perKill: Number(m.per_kill || 0),
+                firstPlace: Number(m.first_place || 0),
+                secondPlace: Number(m.second_place || 0),
+                thirdPlace: Number(m.third_place || 0),
+                roomId: m.room_id || '',
+                roomPassword: m.room_password || '',
+              };
             })
           );
 
-          localStorage.setItem('firearena_matches', JSON.stringify(updatedMatches));
+          // Save to localStorage so MatchGrid can render them smoothly
+          localStorage.setItem('firearena_matches', JSON.stringify(formattedMatches));
+          window.dispatchEvent(new Event('storage')); // Trigger update event if needed
         }
       } catch (err) {
-        console.error('Error syncing match slots:', err);
+        console.error('Error fetching matches from Supabase:', err);
       }
     };
 
@@ -164,7 +183,7 @@ export default function MatchDashboardContent() {
   const handleLogout = async () => {
     await supabase.auth.signOut();
     localStorage.removeItem('firearena_user');
-    window.location.href = '/'; // Redirection to home/login page
+    window.location.href = '/'; 
   };
 
   return (

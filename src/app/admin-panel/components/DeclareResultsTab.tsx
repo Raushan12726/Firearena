@@ -1,12 +1,12 @@
 'use client';
 import React, { useState, useEffect } from 'react';
 import { toast } from 'sonner';
-import { Trophy, Target, Users, CheckCircle, ChevronDown, AlertTriangle, Loader2 } from 'lucide-react';
+import { Trophy, Target, Users, CheckCircle, ChevronDown, AlertTriangle, Loader2, RefreshCw } from 'lucide-react';
 // Centralized Supabase client import karein
 import { supabase } from '@/lib/supabaseClient';
 
 interface ResultPlayer {
-  id: string; // match_participants row id
+  id: string; // row id
   userId: string;
   name: string;
   avatar: string;
@@ -37,12 +37,12 @@ export default function DeclareResultsTab() {
   const [placementInputs, setPlacementInputs] = useState<Record<string, number>>({});
   const [submitting, setSubmitting] = useState<string | null>(null);
 
-  // Database se matches aur unke registered players fetch karna
+  // Database se matches aur unke registered players fetch karna (Universal Sync)
   const fetchMatches = async () => {
     setLoading(true);
     try {
       // 1. Matches Table se data laayein
-      const { data: matchesData, error: matchErr } = await supabase
+      const { data: matchesData } = await supabase
         .from('matches')
         .select('*')
         .order('created_at', { ascending: false });
@@ -56,46 +56,96 @@ export default function DeclareResultsTab() {
 
       if (!allMatches || allMatches.length === 0) {
         setMatches([]);
+        setLoading(false);
         return;
       }
 
       // 2. Har Match ke Participants fetch karein
       const formattedMatches: MatchResult[] = await Promise.all(
         allMatches.map(async (m: any) => {
-          const { data: playersData } = await supabase
+          const mId = m.id;
+          const mIdStr = String(m.id);
+
+          let fetchedPlayers: any[] = [];
+
+          // A. Try fetching from match_participants
+          let { data: partData, error: partErr } = await supabase
             .from('match_participants')
-            .select('*, profiles(username, avatar)')
-            .eq('match_id', m.id);
+            .select('*, profiles(username, avatar, name)')
+            .eq('match_id', mId);
 
-          let fetchedPlayers = playersData || [];
+          // Agar Foreign Key Relation error aaye, toh bina profiles join ke data fetch karein
+          if (partErr) {
+            console.warn("Profiles join failed, trying raw fetch:", partErr.message);
+            const { data: rawPartData } = await supabase
+              .from('match_participants')
+              .select('*')
+              .eq('match_id', mId);
+            partData = rawPartData;
+          }
 
-          // LocalStorage fallback for players if Supabase array is empty
+          if (partData && partData.length > 0) {
+            fetchedPlayers = partData;
+          }
+
+          // B. Try match_players table if empty
           if (fetchedPlayers.length === 0) {
-            const localRegs = JSON.parse(localStorage.getItem('tournament_registrations') || '[]');
-            fetchedPlayers = localRegs
-              .filter((r: any) => r.matchId === m.id)
-              .map((p: any, idx: number) => ({
-                id: p.uid || `player_${idx}`,
-                user_id: p.uid,
-                in_game_name: p.name,
-                kills: 0,
-                placement: null,
-                prize_earned: 0,
-              }));
+            let { data: playerTableData, error: playerErr } = await supabase
+              .from('match_players')
+              .select('*, profiles(username, avatar, name)')
+              .eq('match_id', mId);
+
+            if (playerErr) {
+              const { data: rawPlayerTableData } = await supabase
+                .from('match_players')
+                .select('*')
+                .eq('match_id', mId);
+              playerTableData = rawPlayerTableData;
+            }
+
+            if (playerTableData && playerTableData.length > 0) {
+              fetchedPlayers = playerTableData;
+            }
+          }
+
+          // C. Comprehensive LocalStorage check across all possible keys
+          const regKeys = ['tournament_registrations', 'firearena_joined_matches', 'joined_matches', 'match_registrations', 'firearena_registrations'];
+          let allLocalRegs: any[] = [];
+          regKeys.forEach((key) => {
+            const items = JSON.parse(localStorage.getItem(key) || '[]');
+            if (Array.isArray(items)) {
+              allLocalRegs = [...allLocalRegs, ...items];
+            }
+          });
+
+          const matchLocalRegs = allLocalRegs.filter(
+            (r: any) => String(r.matchId || r.match_id || r.id || r.tournamentId) === mIdStr
+          );
+
+          if (fetchedPlayers.length === 0 && matchLocalRegs.length > 0) {
+            fetchedPlayers = matchLocalRegs.map((r: any, idx: number) => ({
+              id: r.id || r.uid || `local_${idx}`,
+              user_id: r.uid || r.user_id || r.userId,
+              in_game_name: r.name || r.player_name || r.username || r.in_game_name || 'Player',
+              avatar: r.avatar || '🎯',
+              kills: r.kills || 0,
+              placement: r.placement || null,
+              prize_earned: r.prize_earned || 0,
+            }));
           }
 
           const players: ResultPlayer[] = fetchedPlayers.map((p: any, idx: number) => ({
             id: p.id || `p_${idx}`,
-            userId: p.user_id || p.uid || '',
-            name: p.profiles?.username || p.in_game_name || p.name || `Player_${idx + 1}`,
-            avatar: p.profiles?.avatar || '🎯',
-            kills: p.kills || 0,
-            placement: p.placement || null,
+            userId: p.user_id || p.uid || p.userId || '',
+            name: p.profiles?.username || p.profiles?.name || p.player_name || p.in_game_name || p.name || p.username || `Player_${idx + 1}`,
+            avatar: p.profiles?.avatar || p.avatar || '🎯',
+            kills: Number(p.kills || 0),
+            placement: p.placement ? Number(p.placement) : null,
             prizeEarned: Number(p.prize_earned || 0),
           }));
 
           return {
-            matchId: m.id,
+            matchId: mIdStr,
             title: m.title || m.name || 'Custom Match',
             mode: m.mode || 'Classic',
             date: m.start_time || m.created_at
@@ -113,7 +163,7 @@ export default function DeclareResultsTab() {
       );
 
       setMatches(formattedMatches);
-      if (formattedMatches.length > 0) {
+      if (formattedMatches.length > 0 && !expandedMatch) {
         setExpandedMatch(formattedMatches[0].matchId);
       }
     } catch (err: any) {
@@ -141,10 +191,8 @@ export default function DeclareResultsTab() {
     const kills = killInputs[playerId] ?? 0;
     const placement = placementInputs[playerId] ?? 0;
     
-    // Per kill bonus
     const killBonus = kills * match.perKill;
     
-    // Dynamic Top 3 Positions Reward based on Admin setup
     let placementPrize = 0;
     if (placement === 1) placementPrize = match.firstPlace;
     else if (placement === 2) placementPrize = match.secondPlace;
@@ -158,36 +206,32 @@ export default function DeclareResultsTab() {
     setSubmitting(match.matchId);
 
     try {
-      // 1. Match Status 'Completed' update karein Supabase mein
       await supabase
         .from('matches')
         .update({ status: 'Completed' })
         .eq('id', match.matchId);
 
-      // LocalStorage Backup Update
       const localMatches = JSON.parse(localStorage.getItem('firearena_matches') || '[]');
       const updatedLocalMatches = localMatches.map((m: any) =>
-        m.id === match.matchId ? { ...m, status: 'Completed' } : m
+        String(m.id) === match.matchId ? { ...m, status: 'Completed' } : m
       );
       localStorage.setItem('firearena_matches', JSON.stringify(updatedLocalMatches));
 
-      // 2. Har Participant ka result update karke direct wallet mein funds add karein
       for (const player of match.players) {
         const kills = killInputs[player.id] ?? 0;
         const placement = placementInputs[player.id] ?? null;
         const prizeEarned = calculatePrize(player.id, match);
 
-        // Update Participant record in Supabase
         await supabase
           .from('match_participants')
-          .update({
-            kills,
-            placement,
-            prize_earned: prizeEarned,
-          })
+          .update({ kills, placement, prize_earned: prizeEarned })
           .eq('id', player.id);
 
-        // Agar player ne prize jeeta hai, toh seedha unke wallet balance mein add karein
+        await supabase
+          .from('match_players')
+          .update({ kills, placement, prize_earned: prizeEarned })
+          .eq('id', player.id);
+
         if (prizeEarned > 0 && player.userId) {
           const { data: profile } = await supabase
             .from('profiles')
@@ -199,7 +243,6 @@ export default function DeclareResultsTab() {
             const currentBal = Number(profile.balance || profile.wallet_balance || 0);
             const updatedBal = currentBal + prizeEarned;
 
-            // Direct instant balance update (No pending stage)
             await supabase
               .from('profiles')
               .update({
@@ -215,7 +258,7 @@ export default function DeclareResultsTab() {
       }
 
       toast.success(`Results declared & funds instantly added to winners' wallets! 🏆`);
-      fetchMatches(); // Reload fresh data
+      fetchMatches();
     } catch (err: any) {
       toast.error('Failed to update result: ' + err.message);
     } finally {
@@ -225,7 +268,21 @@ export default function DeclareResultsTab() {
 
   return (
     <div className="space-y-5">
-      {/* Header Stat Cards */}
+      {/* Top Header with Force Sync Button */}
+      <div className="flex justify-between items-center bg-card-surface p-4 rounded-xl border border-border">
+        <div>
+          <p className="font-display font-bold text-foreground text-sm">Results Management</p>
+          <p className="text-xs text-muted-foreground">Manage scores, view players and distribute rewards instantly</p>
+        </div>
+        <button
+          onClick={fetchMatches}
+          className="flex items-center gap-2 bg-white/5 hover:bg-white/10 text-foreground px-3 py-2 rounded-lg text-xs font-semibold border border-border transition-all cursor-pointer"
+        >
+          <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
+          Force Sync Players
+        </button>
+      </div>
+
       <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
         <div className="card-surface rounded-xl p-4 border border-neon-orange/30 bg-neon-orange/5">
           <div className="flex items-center gap-2 mb-2">
@@ -262,13 +319,13 @@ export default function DeclareResultsTab() {
       {loading ? (
         <div className="card-surface rounded-xl py-20 text-center flex flex-col items-center justify-center gap-3 border border-border">
           <Loader2 className="w-8 h-8 animate-spin text-neon-cyan" />
-          <p className="text-sm text-muted-foreground">Fetching matches from Database...</p>
+          <p className="text-sm text-muted-foreground">Fetching matches and player details...</p>
         </div>
       ) : matches.length === 0 ? (
         <div className="card-surface rounded-xl py-16 text-center border border-border">
           <Trophy size={36} className="text-muted-foreground mx-auto mb-3" />
           <p className="font-display font-bold text-foreground tracking-wider">No Active Matches Found</p>
-          <p className="text-sm text-muted-foreground mt-1">First create a match from the "+ Create Match" tab above.</p>
+          <p className="text-sm text-muted-foreground mt-1">First create a match from the tab above.</p>
         </div>
       ) : (
         matches.map((match) => {
@@ -317,7 +374,6 @@ export default function DeclareResultsTab() {
               {isExpanded && (
                 <div className="border-t border-border animate-slide-up">
                   <div className="p-4">
-                    {/* Prize Info Header */}
                     <div className="bg-muted/20 border border-border rounded-xl p-2.5 mb-4 text-xs flex flex-wrap justify-between items-center gap-2">
                       <span className="text-muted-foreground font-semibold">🏆 Prize Breakdown:</span>
                       <div className="flex gap-3">
@@ -336,9 +392,10 @@ export default function DeclareResultsTab() {
                     </div>
 
                     {match.players.length === 0 ? (
-                      <p className="text-center text-sm text-muted-foreground py-6">
-                        No players have joined this match yet.
-                      </p>
+                      <div className="text-center py-6 bg-background/50 rounded-lg border border-dashed border-border">
+                        <p className="text-sm text-muted-foreground mb-1">No players have joined this match yet.</p>
+                        <p className="text-xs text-neon-orange">Click "Force Sync Players" above to reload data.</p>
+                      </div>
                     ) : (
                       <div className="overflow-x-auto">
                         <table className="w-full text-sm">
