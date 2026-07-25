@@ -24,13 +24,13 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     if (!currentUid) return;
 
     const { data, error } = await supabase
-      .from('profiles')
-      .select('wallet_balance')
-      .eq('id', currentUid)
-      .single();
+      .from('wallets')
+      .select('balance')
+      .eq('user_id', currentUid)
+      .maybeSingle();
 
     if (!error && data) {
-      setBalance(Number(data.wallet_balance || 0));
+      setBalance(Number(data.balance || 0));
     }
   }, [userId]);
 
@@ -83,13 +83,13 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
         fetchTransactions(user.id);
 
         userChannel = supabase
-          .channel('public:profiles')
+          .channel('public:wallets')
           .on(
             'postgres_changes',
-            { event: 'UPDATE', schema: 'public', table: 'profiles', filter: `id=eq.${user.id}` },
+            { event: 'UPDATE', schema: 'public', table: 'wallets', filter: `user_id=eq.${user.id}` },
             (payload: any) => {
-              if (payload.new && payload.new.wallet_balance !== undefined) {
-                setBalance(Number(payload.new.wallet_balance));
+              if (payload.new && payload.new.balance !== undefined) {
+                setBalance(Number(payload.new.balance));
               }
             }
           )
@@ -143,17 +143,36 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
 
     const currentUserId = authData.user.id;
 
+    // Duplicate UTR check taaki same UTR do baar submit na ho sake
+    if (type === 'deposit' && utrOrUpiId) {
+      const { data: existingTxn } = await supabase
+        .from('transactions')
+        .select('id')
+        .eq('utrid', utrOrUpiId)
+        .maybeSingle();
+
+      if (existingTxn) {
+        alert("This UTR / Transaction ID has already been submitted!");
+        return false;
+      }
+    }
+
     const { data: profileData } = await supabase
       .from('profiles')
-      .select('username, name, wallet_balance')
+      .select('username, name')
       .eq('id', currentUserId)
       .single();
 
+    const { data: walletData } = await supabase
+      .from('wallets')
+      .select('balance')
+      .eq('user_id', currentUserId)
+      .maybeSingle();
+
     const playerName = profileData?.username || profileData?.name || authData.user?.email?.split('@')[0] || 'Player';
-    const currentAvailableBalance = Number(profileData?.wallet_balance || balance);
+    const currentAvailableBalance = Number(walletData?.balance || balance);
 
     if (type === 'deposit') {
-      // 🚀 Deposit ke waqt sirf request save hogi, balance update nahi hoga
       const insertPayload = {
         user_id: currentUserId,
         type: 'deposit',
@@ -217,12 +236,11 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
         return false;
       }
 
-      // Withdrawal mein balance turant minus hoga kyunki paise user ne nikal liye hain
       const newBalance = currentAvailableBalance - amount;
       const { error: updateError } = await supabase
-        .from('profiles')
-        .update({ wallet_balance: newBalance })
-        .eq('id', currentUserId);
+        .from('wallets')
+        .update({ balance: newBalance })
+        .eq('user_id', currentUserId);
 
       if (updateError) {
         console.error("Failed to deduct balance:", updateError.message);

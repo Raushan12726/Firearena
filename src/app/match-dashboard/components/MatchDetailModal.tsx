@@ -68,7 +68,45 @@ export default function MatchDetailModal({ match, onClose, initialTab = 'info' }
       }
     };
 
+    // Initial fetch
     fetchParticipants();
+
+    // Auto-refresh interval (Polling har 3 seconds mein) taaki rank aur prize turant update ho
+    const interval = setInterval(() => {
+      fetchParticipants();
+    }, 3000);
+
+    // Real-time listener
+    const channel = supabase
+      .channel(`match-participants-${match.id}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'match_participants',
+          filter: `match_id=eq.${match.id}`,
+        },
+        (payload) => {
+          if (payload.eventType === 'UPDATE') {
+            setRegisteredPlayers((prev) =>
+              prev.map((p) => (p.id === payload.new.id ? payload.new : p))
+            );
+          } else if (payload.eventType === 'INSERT') {
+            setRegisteredPlayers((prev) => {
+              const exists = prev.some((p) => p.id === payload.new.id);
+              if (!exists) return [...prev, payload.new];
+              return prev;
+            });
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      clearInterval(interval);
+      supabase.removeChannel(channel);
+    };
   }, [match?.id]);
 
   const handleFormSubmit = async (e: React.FormEvent) => {
@@ -110,23 +148,12 @@ export default function MatchDetailModal({ match, onClose, initialTab = 'info' }
       const newBalance = walletBalance - entryFee;
 
       let { error: walletError } = await supabase
-        .from('profiles') 
-        .update({ 
-          balance: newBalance,
-          wallet_balance: newBalance 
-        })
-        .eq('id', loggedInUserId);
+        .from('wallets') 
+        .update({ balance: newBalance })
+        .eq('user_id', loggedInUserId);
 
       if (walletError) {
-        const { error: fallbackError } = await supabase
-          .from('profiles')
-          .update({ 
-            balance: newBalance,
-            wallet_balance: newBalance 
-          })
-          .eq('user_id', loggedInUserId);
-        
-        if (fallbackError) throw new Error(`Paise cut nahi ho paye: ${walletError.message}`);
+        throw new Error(`Paise cut nahi ho paye: ${walletError.message}`);
       }
 
       const { error: insertError } = await supabase
@@ -344,28 +371,32 @@ export default function MatchDetailModal({ match, onClose, initialTab = 'info' }
                 <p className="text-center py-6 text-xs text-neutral-500">No players joined yet.</p>
               ) : (
                 registeredPlayers.map((p, idx) => {
-                  const winning = Number(p.prize_earned || p.winning_amount || 0);
-                  const kills = Number(p.kills || 0);
-                  const placement = p.placement;
+                  const winning = Number(p.prize_earned ?? p.winning_amount ?? p.prizeEarned ?? p.amount ?? 0);
+                  const kills = Number(p.kills ?? p.player_kills ?? 0);
+                  const placement = p.placement ?? p.rank ?? p.position;
 
                   return (
                     <div key={idx} className="flex flex-wrap justify-between items-center bg-neutral-950/60 border border-neutral-800/60 p-2.5 rounded-lg text-xs">
                       
                       <div className="flex flex-col">
-                        <span className="font-bold text-neutral-300 text-[13px]">{idx + 1}. {p.player_name}</span>
-                        <span className="font-mono text-neutral-500 text-[10px] mt-0.5">ID: {p.player_uid}</span>
+                        <span className="font-bold text-neutral-300 text-[13px]">{idx + 1}. {p.player_name || p.name}</span>
+                        <span className="font-mono text-neutral-500 text-[10px] mt-0.5">ID: {p.player_uid || p.user_id}</span>
                       </div>
 
                       <div className="flex items-center gap-1.5 mt-2 sm:mt-0">
-                        {placement && (
-                          <span className="text-[10px] uppercase font-bold text-neutral-400 bg-neutral-900 border border-neutral-800 px-1.5 py-0.5 rounded">
-                            Rank #{placement}
+                        {placement !== null && placement !== undefined && placement !== '' ? (
+                          <span className="text-[10px] uppercase font-bold text-orange-400 bg-orange-950/40 border border-orange-900/50 px-1.5 py-0.5 rounded">
+                            {Number(placement) === 1 ? '🥇 #1 Winner' : Number(placement) === 2 ? '🥈 #2 Winner' : Number(placement) === 3 ? '🥉 #3 Winner' : `Rank #${placement}`}
+                          </span>
+                        ) : (
+                          <span className="text-[10px] text-neutral-500 bg-neutral-900 px-1.5 py-0.5 rounded">
+                            Pending Rank
                           </span>
                         )}
                         
                         {kills > 0 && (
                           <span className="bg-red-500/10 text-red-400 border border-red-500/20 text-[10px] px-1.5 py-0.5 rounded font-bold">
-                            ⚔️ {kills}
+                            ⚔️ {kills} Kills
                           </span>
                         )}
 
@@ -374,9 +405,9 @@ export default function MatchDetailModal({ match, onClose, initialTab = 'info' }
                             🏆 ₹{winning}
                           </span>
                         ) : (
-                          match.status === 'Completed' && winning === 0 && (
-                            <span className="text-neutral-600 text-[10px] italic bg-neutral-900 px-2 py-0.5 rounded">No Prize</span>
-                          )
+                          <span className="text-neutral-500 text-[10px] italic bg-neutral-900 px-2 py-0.5 rounded">
+                            No Prize
+                          </span>
                         )}
                       </div>
                     </div>

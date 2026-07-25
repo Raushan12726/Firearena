@@ -17,20 +17,21 @@ export default function WalletWidget({ onAddFunds, userId }: { onAddFunds: () =>
 
       if (!activeUid) return;
 
-      const { data: profileData } = await supabase
-        .from('profiles')
+      // FIX: Stats ab profiles ki jagah wallets table se aayenge
+      const { data: walletData } = await supabase
+        .from('wallets')
         .select('earned, spent')
-        .eq('id', activeUid)
-        .single();
+        .eq('user_id', activeUid)
+        .maybeSingle();
 
-      if (profileData) {
-        setEarned(profileData.earned || 0);
-        setSpent(profileData.spent || 0);
+      if (walletData) {
+        setEarned(walletData.earned || 0);
+        setSpent(walletData.spent || 0);
       }
     }
 
     fetchStats();
-  }, [userId, supabase]);
+  }, [userId, supabase, contextBalance]); // contextBalance add kiya taaki jab balance change ho tab stats refresh ho
 
   const displayBalance = contextBalance !== undefined ? contextBalance : 0;
   const displayTransactions = contextTransactions && contextTransactions.length > 0 

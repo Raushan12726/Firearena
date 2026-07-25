@@ -1,6 +1,5 @@
 'use client';
 import { useEffect, useState } from 'react';
-// Centralized Supabase client import karein
 import { supabase } from '@/lib/supabaseClient';
 
 export default function WalletApprovalsTab() {
@@ -52,11 +51,7 @@ export default function WalletApprovalsTab() {
     const sourceTable = item.sourceTable;
     const rowId = item.id;
     const amount = Number(item.amount || 0);
-    // Yaha check karein ki user_id kaunse column me save hai (user_id, userId, ya player_id)
     const userId = item.user_id || item.userId || item.player_id;
-
-    console.log("Processing item:", item);
-    console.log("Extracted User ID:", userId);
 
     if (rowId === undefined || rowId === null) {
       alert('Error: Row ID not found for this item.');
@@ -74,43 +69,66 @@ export default function WalletApprovalsTab() {
       return;
     }
 
-    // 2. Agar Deposit/Transaction Approved ho jaye, toh Balance Add Karein
+    // 2. Agar Deposit/Transaction Approved ho jaye, toh Balance Add Karein (wallets table me)
     if (sourceTable === 'transactions' && newStatus === 'Approved') {
       if (!userId) {
         console.warn("User ID missing in transaction row, cannot update balance automatically.");
       } else {
-        // Aapke profiles table ya users table se balance fetch karein
-        const { data: profile, error: profileError } = await supabase
-          .from('profiles') // Agar table ka naam 'users' hai toh yahan 'users' kar dein
+        // FIX: 'profiles' ki jagah 'wallets' table se balance fetch karein
+        const { data: walletData, error: walletError } = await supabase
+          .from('wallets')
           .select('balance')
-          .eq('id', userId)
-          .single();
+          .eq('user_id', userId)
+          .maybeSingle();
 
-        if (profileError) {
-          console.error("Error fetching profile balance:", profileError.message);
+        if (walletError) {
+          console.error("Error fetching wallet balance:", walletError.message);
         } else {
-          const currentBalance = Number(profile?.balance || 0);
+          const currentBalance = Number(walletData?.balance || 0);
           const newBalance = currentBalance + amount;
 
+          // FIX: Balance 'wallets' table me update karein
           const { error: updateError } = await supabase
-            .from('profiles')
+            .from('wallets')
             .update({ balance: newBalance })
-            .eq('id', userId);
+            .eq('user_id', userId);
 
           if (updateError) {
             console.error("Error updating balance:", updateError.message);
           } else {
-            console.log("Balance updated successfully to:", newBalance);
+            console.log("Balance added successfully to wallets:", newBalance);
           }
         }
       }
     }
 
-    // 3. Agar Withdrawal Rejected ho jaye, toh paise wapas refund karein
-    if (sourceTable === 'withdrawals' && newStatus === 'Rejected' && userId) {
-      const { data: profile } = await supabase.from('profiles').select('balance').eq('id', userId).single();
-      const currentBalance = Number(profile?.balance || 0);
-      await supabase.from('profiles').update({ balance: currentBalance + amount }).eq('id', userId);
+    // 3. Agar Withdrawal Rejected ho jaye, toh paise wapas refund karein (wallets table me)
+    if (sourceTable === 'withdrawals' && newStatus === 'Rejected') {
+      if (!userId) {
+        console.warn("User ID missing, cannot refund balance.");
+      } else {
+        // FIX: 'profiles' ki jagah 'wallets' table use karein
+        const { data: walletData } = await supabase
+          .from('wallets')
+          .select('balance')
+          .eq('user_id', userId)
+          .maybeSingle();
+          
+        const currentBalance = Number(walletData?.balance || 0);
+        const refundedBalance = currentBalance + amount;
+
+        // FIX: Refunded amount 'wallets' table me update karein
+        const { error: updateError } = await supabase
+          .from('wallets')
+          .update({ balance: refundedBalance })
+          .eq('user_id', userId);
+          
+        if (updateError) {
+          console.error("Error refunding balance:", updateError.message);
+        } else {
+          console.log("Balance refunded successfully to wallets:", refundedBalance);
+        }
+      }
     }
 
     alert(`Request marked as ${newStatus} successfully!`);
@@ -207,7 +225,7 @@ export default function WalletApprovalsTab() {
                 <div className="space-y-1">
                   <div className="flex items-center gap-2">
                     <span className={`px-2 py-0.5 rounded text-xs font-bold uppercase ${
-                      isWithdrawal ? 'bg-orange-500/20` text-orange-400' : 'bg-green-500/20 text-green-400'
+                      isWithdrawal ? 'bg-orange-500/20 text-orange-400' : 'bg-green-500/20 text-green-400'
                     }`}>
                       {isWithdrawal ? 'Withdrawal' : 'Deposit'}
                     </span>

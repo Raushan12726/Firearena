@@ -140,8 +140,8 @@ export default function DeclareResultsTab() {
             name: p.profiles?.username || p.profiles?.name || p.player_name || p.in_game_name || p.name || p.username || `Player_${idx + 1}`,
             avatar: p.profiles?.avatar || p.avatar || '🎯',
             kills: Number(p.kills || 0),
-            placement: p.placement ? Number(p.placement) : null,
-            prizeEarned: Number(p.prize_earned || 0),
+            placement: p.placement !== null && p.placement !== undefined ? Number(p.placement) : null,
+            prizeEarned: Number(p.prize_earned || p.prizeEarned || 0),
           }));
 
           return {
@@ -201,7 +201,7 @@ export default function DeclareResultsTab() {
     return killBonus + placementPrize;
   };
 
-  // Declare Result aur Instant Direct Wallet Credit
+  // Declare Result aur Instant Direct Wallet Credit (Fix applied for 'wallets' & 'profiles')
   const handleDeclare = async (match: MatchResult) => {
     setSubmitting(match.matchId);
 
@@ -218,8 +218,17 @@ export default function DeclareResultsTab() {
       localStorage.setItem('firearena_matches', JSON.stringify(updatedLocalMatches));
 
       for (const player of match.players) {
-        const kills = killInputs[player.id] ?? 0;
-        const placement = placementInputs[player.id] ?? null;
+        const kills = killInputs[player.id] ?? player.kills ?? 0;
+        const placement = placementInputs[player.id] ?? player.placement ?? null;
+
+        // Agar inputs empty hain lekin player object mein pehle se value hai toh usko set karein
+        if (killInputs[player.id] === undefined && player.kills !== undefined) {
+          killInputs[player.id] = player.kills;
+        }
+        if (placementInputs[player.id] === undefined && player.placement !== null) {
+          placementInputs[player.id] = player.placement;
+        }
+
         const prizeEarned = calculatePrize(player.id, match);
 
         await supabase
@@ -232,7 +241,32 @@ export default function DeclareResultsTab() {
           .update({ kills, placement, prize_earned: prizeEarned })
           .eq('id', player.id);
 
+        // Agar player ko prize mila hai aur user_id available hai
         if (prizeEarned > 0 && player.userId) {
+          
+          // 1. Wallets table se balance update karein
+          const { data: walletData } = await supabase
+            .from('wallets')
+            .select('balance')
+            .eq('user_id', player.userId)
+            .single();
+
+          if (walletData) {
+            const currentWalletBal = Number(walletData.balance || 0);
+            const newWalletBal = currentWalletBal + prizeEarned;
+
+            await supabase
+              .from('wallets')
+              .update({ balance: newWalletBal })
+              .eq('user_id', player.userId);
+          } else {
+            // Agar wallet row nahi hai toh create kardein
+            await supabase
+              .from('wallets')
+              .insert([{ user_id: player.userId, balance: prizeEarned }]);
+          }
+
+          // 2. Profiles table bhi update karein (agar balance/stats wahan bhi store hote hain)
           const { data: profile } = await supabase
             .from('profiles')
             .select('balance, wallet_balance, earnings, kills, wins')
@@ -254,10 +288,23 @@ export default function DeclareResultsTab() {
               })
               .eq('id', player.userId);
           }
+
+          // 3. Transactions history add karein
+          await supabase
+            .from('transactions')
+            .insert([
+              {
+                user_id: player.userId,
+                type: 'Tournament Win',
+                amount: prizeEarned,
+                description: `Won prize in match: ${match.title}`,
+                created_at: new Date().toISOString()
+              }
+            ]);
         }
       }
 
-      toast.success(`Results declared & funds instantly added to winners' wallets! 🏆`);
+      toast.success(`Results declared & funds successfully added to winners' wallets! 🏆`);
       fetchMatches();
     } catch (err: any) {
       toast.error('Failed to update result: ' + err.message);
@@ -427,7 +474,7 @@ export default function DeclareResultsTab() {
                                   </td>
                                   <td className="py-3 text-center">
                                     {isDeclared ? (
-                                      <span className="font-display font-bold text-neon-cyan tabular-nums">{kills}</span>
+                                      <span className="font-display font-bold text-neon-cyan tabular-nums">{player.kills}</span>
                                     ) : (
                                       <input
                                         type="number"
@@ -442,7 +489,7 @@ export default function DeclareResultsTab() {
                                   <td className="py-3 text-center">
                                     {isDeclared ? (
                                       <span className="font-display font-bold text-neon-orange">
-                                        {placement === 1 ? '🥇 #1' : placement === 2 ? '🥈 #2' : placement === 3 ? '🥉 #3' : `#${placement}`}
+                                        {player.placement ? (player.placement === 1 ? '🥇 #1' : player.placement === 2 ? '🥈 #2' : player.placement === 3 ? '🥉 #3' : `#${player.placement}`) : 'No Rank'}
                                       </span>
                                     ) : (
                                       <select

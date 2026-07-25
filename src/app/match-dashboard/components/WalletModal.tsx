@@ -34,6 +34,7 @@ export default function WalletModal({ onClose, matchId, entryFee = 0, userId, on
 
   const upiId = 'raushan.13@ptyes';
 
+  // FIX: Sahi table 'wallets' se balance fetch karna
   const fetchWalletBalance = async () => {
     try {
       const { data: { user: authUser } } = await supabase.auth.getUser();
@@ -41,13 +42,13 @@ export default function WalletModal({ onClose, matchId, entryFee = 0, userId, on
       if (!currentUserId) return;
 
       const { data, error } = await supabase
-        .from('profiles')
-        .select('wallet_balance')
-        .eq('id', currentUserId)
-        .single();
+        .from('wallets')
+        .select('balance')
+        .eq('user_id', currentUserId)
+        .maybeSingle();
 
       if (data && !error) {
-        setAvailableBalance(Number(data.wallet_balance || 0));
+        setAvailableBalance(Number(data.balance || 0));
       }
     } catch (err) {
       console.error("Error fetching wallet balance:", err);
@@ -56,15 +57,9 @@ export default function WalletModal({ onClose, matchId, entryFee = 0, userId, on
 
   useEffect(() => {
     fetchWalletBalance();
-    const interval = setInterval(fetchWalletBalance, 5000);
+    const interval = setInterval(fetchWalletBalance, 3000);
     return () => clearInterval(interval);
   }, []);
-
-  useEffect(() => {
-    if (contextBalance !== undefined) {
-      setAvailableBalance(contextBalance);
-    }
-  }, [contextBalance]);
 
   const validateDeposit = (): boolean => {
     const errs: { amount?: string; utrId?: string } = {};
@@ -173,10 +168,11 @@ export default function WalletModal({ onClose, matchId, entryFee = 0, userId, on
 
     setJoining(true);
 
+    // FIX: Deduct directly from 'wallets' table
     const { error: updateError } = await supabase
-      .from('profiles')
-      .update({ wallet_balance: availableBalance - entryFee })
-      .eq('id', currentUserId);
+      .from('wallets')
+      .update({ balance: availableBalance - entryFee, updated_at: new Date().toISOString() })
+      .eq('user_id', currentUserId);
 
     if (updateError) {
       toast.error('Failed to deduct entry fee');
@@ -189,7 +185,7 @@ export default function WalletModal({ onClose, matchId, entryFee = 0, userId, on
       .insert([{ match_id: matchId, user_id: currentUserId }]);
 
     if (joinError) {
-      await supabase.from('profiles').update({ wallet_balance: availableBalance }).eq('id', currentUserId);
+      await supabase.from('wallets').update({ balance: availableBalance, updated_at: new Date().toISOString() }).eq('user_id', currentUserId);
       toast.error('Failed to join tournament');
       setJoining(false);
       return;
