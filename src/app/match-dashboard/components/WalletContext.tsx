@@ -202,6 +202,18 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
         alert("Deposit Error: " + error.message);
         return false;
       }
+
+      // NOTE: Agar aap chahte hain ki deposit request daalte hi balance turant add ho jaye (बिina admin approve kiye), 
+      // toh niche diye gaye code ko uncomment kar sakte hain:
+      /*
+      const newBalance = currentAvailableBalance + amount;
+      await supabase
+        .from('wallets')
+        .update({ balance: newBalance })
+        .eq('user_id', currentUserId);
+      setBalance(newBalance);
+      */
+
     } else if (type === 'withdraw') {
       if (currentAvailableBalance < amount) {
         alert(`Insufficient Balance! Available: ₹${currentAvailableBalance}`);

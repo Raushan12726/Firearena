@@ -34,7 +34,6 @@ export default function WalletModal({ onClose, matchId, entryFee = 0, userId, on
 
   const upiId = 'raushan.13@ptyes';
 
-  // FIX: Sahi table 'wallets' se balance fetch karna
   const fetchWalletBalance = async () => {
     try {
       const { data: { user: authUser } } = await supabase.auth.getUser();
@@ -66,7 +65,7 @@ export default function WalletModal({ onClose, matchId, entryFee = 0, userId, on
     const amt = parseFloat(depositAmount);
     
     if (!depositAmount) errs.amount = 'Amount is required';
-    else if (isNaN(amt) || amt < 50) errs.amount = 'Minimum ₹50';
+    else if (isNaN(amt) || amt < 0) errs.amount = 'Minimum ₹0'; // Minimum 0 set kar diya gaya hai
     else if (amt > 10000) errs.amount = 'Maximum ₹10,000';
 
     const cleanUtr = depositUtr.trim();
@@ -168,7 +167,6 @@ export default function WalletModal({ onClose, matchId, entryFee = 0, userId, on
 
     setJoining(true);
 
-    // FIX: Deduct directly from 'wallets' table
     const { error: updateError } = await supabase
       .from('wallets')
       .update({ balance: availableBalance - entryFee, updated_at: new Date().toISOString() })
@@ -345,7 +343,7 @@ export default function WalletModal({ onClose, matchId, entryFee = 0, userId, on
                 <form onSubmit={onDeposit} className="space-y-4">
                   <div>
                     <label className="block text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-1">Amount (₹)</label>
-                    <p className="text-muted-foreground text-[10px] mb-2">Minimum ₹50 · Maximum ₹10,000</p>
+                    <p className="text-muted-foreground text-[10px] mb-2">Minimum ₹0 · Maximum ₹10,000</p>
                     <input
                       type="number"
                       placeholder="e.g. 500"
