@@ -2,7 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import { useForm } from 'react-hook-form';
 import { toast } from 'sonner';
-import { Plus, Swords, Zap, Settings, Trophy, Lock, Target, PlayCircle, Trash2, Edit3, Loader2 } from 'lucide-react';
+import { Plus, Swords, Zap, Settings, Trophy, Lock, Target, PlayCircle, Trash2, Edit3, Loader2, X, Save } from 'lucide-react';
 import { supabase } from '@/lib/supabaseClient';
 
 interface CreateMatchFormData {
@@ -40,10 +40,10 @@ export default function CreateMatchTab() {
   const [selectedMode, setSelectedMode] = useState('Classic');
   const [createdMatches, setCreatedMatches] = useState<any[]>([]);
 
-  // Room ID/Password set/edit karne ke liye state
+  // Room ID/Password & Prize Edit Modal States
   const [editingMatchId, setEditingMatchId] = useState<string | null>(null);
-  const [tempRoomId, setTempRoomId] = useState('');
-  const [tempRoomPassword, setTempRoomPassword] = useState('');
+  const [tempMatch, setTempMatch] = useState<any>(null);
+  const [isUpdating, setIsUpdating] = useState(false);
 
   // Fetch matches from Supabase on load
   const fetchMatchesFromSupabase = async () => {
@@ -122,10 +122,9 @@ export default function CreateMatchTab() {
         filled_slots: 0,
       };
 
-      const { data: insertedData, error } = await supabase
+      const { error } = await supabase
         .from('matches')
-        .insert([matchPayload])
-        .select();
+        .insert([matchPayload]);
 
       if (error) throw error;
 
@@ -156,24 +155,38 @@ export default function CreateMatchTab() {
     }
   };
 
-  // Function to Save/Update Room Credentials
-  const handleSaveRoomDetails = async (matchId: string) => {
+  // Function to Save Edited Match Details (Prizes & Room ID)
+  const handleSaveEditedMatch = async () => {
+    if (!tempMatch || !editingMatchId) return;
+    setIsUpdating(true);
     try {
+      const updatePayload = {
+        title: tempMatch.title,
+        first_place: Number(tempMatch.firstPlace),
+        second_place: Number(tempMatch.secondPlace),
+        third_place: Number(tempMatch.thirdPlace),
+        per_kill: Number(tempMatch.perKill),
+        prize_pool: Number(tempMatch.prizePool),
+        entry_fee: Number(tempMatch.entryFee),
+        room_id: tempMatch.roomId || '',
+        room_password: tempMatch.roomPassword || '',
+      };
+
       const { error } = await supabase
         .from('matches')
-        .update({
-          room_id: tempRoomId,
-          room_password: tempRoomPassword,
-        })
-        .eq('id', matchId);
+        .update(updatePayload)
+        .eq('id', editingMatchId);
 
       if (error) throw error;
 
+      toast.success('Match prizes & credentials updated successfully! 🎯');
       setEditingMatchId(null);
-      toast.success('Room ID & Password updated successfully! 🔑');
+      setTempMatch(null);
       fetchMatchesFromSupabase();
     } catch (err: any) {
-      toast.error('Failed to update room details: ' + err.message);
+      toast.error('Failed to update match: ' + err.message);
+    } finally {
+      setIsUpdating(false);
     }
   };
 
@@ -538,6 +551,12 @@ export default function CreateMatchTab() {
                     <p className="text-xs text-muted-foreground mt-0.5">
                       {match.mode} • Map: {match.map} • Time: {match.time} • Status: <span className="text-neon-cyan font-bold">{match.status}</span>
                     </p>
+                    <div className="flex items-center gap-4 mt-1 text-xs">
+                      <span className="text-neon-orange font-bold">🥇 1st: ₹{match.firstPlace}</span>
+                      <span className="text-slate-300 font-bold">🥈 2nd: ₹{match.secondPlace}</span>
+                      <span className="text-amber-600 font-bold">🥉 3rd: ₹{match.thirdPlace}</span>
+                      <span className="text-neon-cyan font-bold">🎯 Kill: ₹{match.perKill}</span>
+                    </div>
                     {match.roomId && (
                       <p className="text-xs text-neon-green mt-1 font-mono">
                         🔑 Room ID: {match.roomId} | Pass: {match.roomPassword || 'N/A'}
@@ -546,16 +565,20 @@ export default function CreateMatchTab() {
                   </div>
                   
                   <div className="flex items-center gap-2 flex-wrap">
-                    {/* Edit Room ID Button */}
+                    {/* Edit Prizes & Room ID Button */}
                     <button
                       onClick={() => {
-                        setEditingMatchId(editingMatchId === match.id ? null : match.id);
-                        setTempRoomId(match.roomId || '');
-                        setTempRoomPassword(match.roomPassword || '');
+                        if (editingMatchId === match.id) {
+                          setEditingMatchId(null);
+                          setTempMatch(null);
+                        } else {
+                          setEditingMatchId(match.id);
+                          setTempMatch({ ...match });
+                        }
                       }}
                       className="bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-400 border border-cyan-500/40 px-3 py-2 rounded-lg text-xs font-bold tracking-wider transition flex items-center gap-1.5 cursor-pointer"
                     >
-                      <Edit3 size={14} /> {editingMatchId === match.id ? 'Close ID Box' : '🔑 Set/Edit Room ID'}
+                      <Edit3 size={14} /> {editingMatchId === match.id ? 'Close Edit Box' : '✏️ Edit Prizes & Room ID'}
                     </button>
 
                     {match.status !== 'Live' ? (
@@ -582,39 +605,109 @@ export default function CreateMatchTab() {
                   </div>
                 </div>
 
-                {/* Inline Room ID Edit Panel */}
-                {editingMatchId === match.id && (
-                  <div className="bg-background/80 border border-neon-cyan/40 p-4 rounded-lg space-y-3 mt-2">
-                    <p className="text-xs font-bold text-neon-cyan uppercase tracking-wider">
-                      Update Room Credentials for players:
-                    </p>
+                {/* Inline Edit Panel for Prizes & Room Credentials */}
+                {editingMatchId === match.id && tempMatch && (
+                  <div className="bg-background/95 border border-neon-cyan/40 p-4 rounded-xl space-y-4 mt-2">
+                    <div className="flex items-center justify-between border-b border-border pb-2">
+                      <p className="text-xs font-bold text-neon-cyan uppercase tracking-wider flex items-center gap-1.5">
+                        <Trophy size={14} /> Edit Match Prizes & Room Details
+                      </p>
+                      <button 
+                        onClick={() => setEditingMatchId(null)}
+                        className="text-muted-foreground hover:text-foreground"
+                      >
+                        <X size={16} />
+                      </button>
+                    </div>
+
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                       <div>
-                        <label className="block text-[10px] text-muted-foreground uppercase mb-1">Room ID</label>
+                        <label className="block text-[10px] text-muted-foreground uppercase mb-1">Match Title</label>
                         <input
                           type="text"
-                          placeholder="Enter Room ID"
-                          value={tempRoomId}
-                          onChange={(e) => setTempRoomId(e.target.value)}
+                          value={tempMatch.title}
+                          onChange={(e) => setTempMatch({ ...tempMatch, title: e.target.value })}
+                          className="input-gaming w-full rounded px-3 py-2 text-xs bg-neutral-900 text-white border border-neutral-700"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] text-muted-foreground uppercase mb-1">Total Prize Pool (₹)</label>
+                        <input
+                          type="number"
+                          value={tempMatch.prizePool}
+                          onChange={(e) => setTempMatch({ ...tempMatch, prizePool: e.target.value })}
+                          className="input-gaming w-full rounded px-3 py-2 text-xs bg-neutral-900 text-white border border-neutral-700"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-3 gap-3">
+                      <div>
+                        <label className="block text-[10px] text-yellow-400 uppercase mb-1">🥇 1st Place (₹)</label>
+                        <input
+                          type="number"
+                          value={tempMatch.firstPlace}
+                          onChange={(e) => setTempMatch({ ...tempMatch, firstPlace: e.target.value })}
+                          className="input-gaming w-full rounded px-3 py-2 text-xs bg-neutral-900 text-white border border-neutral-700"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] text-slate-300 uppercase mb-1">🥈 2nd Place (₹)</label>
+                        <input
+                          type="number"
+                          value={tempMatch.secondPlace}
+                          onChange={(e) => setTempMatch({ ...tempMatch, secondPlace: e.target.value })}
+                          className="input-gaming w-full rounded px-3 py-2 text-xs bg-neutral-900 text-white border border-neutral-700"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] text-amber-600 uppercase mb-1">🥉 3rd Place (₹)</label>
+                        <input
+                          type="number"
+                          value={tempMatch.thirdPlace}
+                          onChange={(e) => setTempMatch({ ...tempMatch, thirdPlace: e.target.value })}
+                          className="input-gaming w-full rounded px-3 py-2 text-xs bg-neutral-900 text-white border border-neutral-700"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-3 gap-3">
+                      <div>
+                        <label className="block text-[10px] text-neon-cyan uppercase mb-1">🎯 Per Kill Bonus (₹)</label>
+                        <input
+                          type="number"
+                          value={tempMatch.perKill}
+                          onChange={(e) => setTempMatch({ ...tempMatch, perKill: e.target.value })}
+                          className="input-gaming w-full rounded px-3 py-2 text-xs bg-neutral-900 text-white border border-neutral-700"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] text-neon-green uppercase mb-1">🔑 Room ID</label>
+                        <input
+                          type="text"
+                          value={tempMatch.roomId}
+                          onChange={(e) => setTempMatch({ ...tempMatch, roomId: e.target.value })}
                           className="input-gaming w-full rounded px-3 py-2 text-xs font-mono bg-neutral-900 text-white border border-neutral-700"
                         />
                       </div>
                       <div>
-                        <label className="block text-[10px] text-muted-foreground uppercase mb-1">Room Password</label>
+                        <label className="block text-[10px] text-neon-green uppercase mb-1">🔑 Room Password</label>
                         <input
                           type="text"
-                          placeholder="Enter Password"
-                          value={tempRoomPassword}
-                          onChange={(e) => setTempRoomPassword(e.target.value)}
+                          value={tempMatch.roomPassword}
+                          onChange={(e) => setTempMatch({ ...tempMatch, roomPassword: e.target.value })}
                           className="input-gaming w-full rounded px-3 py-2 text-xs font-mono bg-neutral-900 text-white border border-neutral-700"
                         />
                       </div>
                     </div>
+
                     <button
-                      onClick={() => handleSaveRoomDetails(match.id)}
-                      className="btn-solid-orange w-full rounded py-2 text-xs font-bold uppercase tracking-widest cursor-pointer"
+                      onClick={handleSaveEditedMatch}
+                      disabled={isUpdating}
+                      className="btn-solid-orange w-full rounded py-2.5 text-xs font-bold uppercase tracking-widest flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
                     >
-                      💾 Save & Publish Room Credentials
+                      {isUpdating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save size={14} />}
+                      Update Match Prizes & Credentials
                     </button>
                   </div>
                 )}
