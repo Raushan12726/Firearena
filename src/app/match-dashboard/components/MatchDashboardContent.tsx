@@ -156,7 +156,6 @@ export default function MatchDashboardContent() {
         if (!error && dbMatches) {
           const formattedMatches: Match[] = await Promise.all(
             dbMatches.map(async (m: any) => {
-              // Correct table name 'match_participants' used here
               const { count, error: countErr } = await supabase
                 .from('match_participants')
                 .select('*', { count: 'exact', head: true })
@@ -199,7 +198,6 @@ export default function MatchDashboardContent() {
 
     loadUserDataAndMatches();
 
-    // ─── REALTIME SUBSCRIPTION TO SYNC LIVE PARTICIPANTS ─────────────────────
     const realtimeChannel = supabase
       .channel('public:match_participants_changes')
       .on(
@@ -236,7 +234,6 @@ export default function MatchDashboardContent() {
     };
   }, []);
 
-  // Logout Function
   const handleLogout = async () => {
     await supabase.auth.signOut();
     localStorage.removeItem('firearena_user');
@@ -258,13 +255,27 @@ export default function MatchDashboardContent() {
 
       {/* Responsive Page Header */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
-        <div>
-          <h1 className="font-display text-2xl sm:text-3xl font-bold text-foreground tracking-wider">
-            MATCH <span className="text-gradient-cyan">DASHBOARD</span>
-          </h1>
-          <p className="text-xs sm:text-sm text-muted-foreground mt-1">
-            {currentDateTime || 'Loading time...'} • <span className="text-neon-green font-semibold">{onlinePlayers.toLocaleString()} players online</span>
-          </p>
+        <div className="space-y-3">
+          {/* Logo & Subtext added directly above MATCH DASHBOARD */}
+          <div className="flex items-center gap-3">
+            <img 
+              src="/assets/images/garena_free_fire_india_logo.jpg" 
+              alt="Garena Free Fire India Logo" 
+              className="w-10 h-10 rounded-lg object-cover border border-cyan-500/40 shadow-[0_0_10px_rgba(0,212,255,0.2)]"
+            />
+            <span className="font-display text-xs sm:text-sm font-bold tracking-widest text-cyan-400 uppercase">
+              Free Fire India 🇮🇳 Tournament Hub
+            </span>
+          </div>
+
+          <div>
+            <h1 className="font-display text-2xl sm:text-3xl font-bold text-foreground tracking-wider">
+              MATCH <span className="text-gradient-cyan">DASHBOARD</span>
+            </h1>
+            <p className="text-xs sm:text-sm text-muted-foreground mt-1">
+              {currentDateTime || 'Loading time...'} • <span className="text-neon-green font-semibold">{onlinePlayers.toLocaleString()} players online</span>
+            </p>
+          </div>
         </div>
 
         <div className="flex items-center justify-between sm:justify-end gap-3 w-full md:w-auto">
