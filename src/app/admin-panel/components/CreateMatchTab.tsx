@@ -54,25 +54,33 @@ export default function CreateMatchTab() {
         .order('created_at', { ascending: false });
 
       if (!error && data) {
-        const formatted = data.map((m: any) => ({
-          id: String(m.id),
-          title: m.title || m.name,
-          mode: m.mode,
-          map: m.map,
-          date: m.date || m.start_time?.split('T')[0],
-          time: m.time || '',
-          startTime: m.start_time || '',
-          entryFee: Number(m.entry_fee || 0),
-          prizePool: Number(m.prize_pool || 0),
-          totalSlots: Number(m.total_slots || m.totalSlots || 50),
-          firstPlace: Number(m.first_place || 0),
-          secondPlace: Number(m.second_place || 0),
-          thirdPlace: Number(m.third_place || 0),
-          perKill: Number(m.per_kill || 0),
-          roomId: m.room_id || m.roomId || '',
-          roomPassword: m.room_password || m.roomPassword || '',
-          status: m.status || 'Registration Open',
-        }));
+        const formatted = data.map((m: any) => {
+          const rawType = Number(m.max_squad_size || m.maxSquadSize || 1);
+          const resolvedType = rawType === 4 ? 'squad' : rawType === 2 ? 'duo' : 'solo';
+
+          return {
+            id: String(m.id),
+            title: m.title || m.name,
+            mode: m.mode,
+            map: m.map,
+            date: m.date || m.start_time?.split('T')[0],
+            time: m.time || '',
+            startTime: m.start_time || '',
+            entryFee: Number(m.entry_fee || 0),
+            prizePool: Number(m.prize_pool || 0),
+            totalSlots: Number(m.total_slots || m.totalSlots || 50),
+            firstPlace: Number(m.first_place || 0),
+            secondPlace: Number(m.second_place || 0),
+            thirdPlace: Number(m.third_place || 0),
+            perKill: Number(m.per_kill || 0),
+            roomId: m.room_id || m.roomId || '',
+            roomPassword: m.room_password || m.roomPassword || '',
+            status: m.status || 'Registration Open',
+            maxSquadSize: rawType,
+            matchType: resolvedType,
+            type: resolvedType,
+          };
+        });
         setCreatedMatches(formatted);
       }
     } catch (err) {
@@ -102,6 +110,9 @@ export default function CreateMatchTab() {
   const onSubmit = async (data: CreateMatchFormData) => {
     setIsLoading(true);
     try {
+      const squadSizeNum = Number(data.maxSquadSize || 1);
+      const matchTypeStr = squadSizeNum === 4 ? 'squad' : squadSizeNum === 2 ? 'duo' : 'solo';
+
       const matchPayload = {
         title: data.title,
         mode: data.mode,
@@ -120,6 +131,9 @@ export default function CreateMatchTab() {
         room_password: data.roomPassword || '',
         status: 'Registration Open',
         filled_slots: 0,
+        max_squad_size: squadSizeNum,
+        match_type: matchTypeStr,
+        type: matchTypeStr,
       };
 
       const { error } = await supabase
@@ -160,6 +174,9 @@ export default function CreateMatchTab() {
     if (!tempMatch || !editingMatchId) return;
     setIsUpdating(true);
     try {
+      const squadSizeNum = Number(tempMatch.maxSquadSize || 1);
+      const matchTypeStr = squadSizeNum === 4 ? 'squad' : squadSizeNum === 2 ? 'duo' : 'solo';
+
       const updatePayload = {
         title: tempMatch.title,
         first_place: Number(tempMatch.firstPlace),
@@ -170,6 +187,9 @@ export default function CreateMatchTab() {
         entry_fee: Number(tempMatch.entryFee),
         room_id: tempMatch.roomId || '',
         room_password: tempMatch.roomPassword || '',
+        max_squad_size: squadSizeNum,
+        match_type: matchTypeStr,
+        type: matchTypeStr,
       };
 
       const { error } = await supabase
@@ -179,7 +199,7 @@ export default function CreateMatchTab() {
 
       if (error) throw error;
 
-      toast.success('Match prizes & credentials updated successfully! 🎯');
+      toast.success('Match details updated successfully! 🎯');
       setEditingMatchId(null);
       setTempMatch(null);
       fetchMatchesFromSupabase();
@@ -499,15 +519,15 @@ export default function CreateMatchTab() {
               <div className="space-y-4">
                 <div>
                   <label className="block text-xs font-semibold tracking-widest text-muted-foreground uppercase mb-1.5">
-                    Max Squad Size
+                    Max Squad Size (Solo / Duo / Squad)
                   </label>
                   <select
                     className="input-gaming w-full rounded-lg px-4 py-3 text-sm bg-neutral-900 text-white"
                     {...register('maxSquadSize')}
                   >
-                    <option value={1}>Solo (1)</option>
-                    <option value={2}>Duo (2)</option>
-                    <option value={4}>Squad (4)</option>
+                    <option value={1}>Solo (1 Player)</option>
+                    <option value={2}>Duo (2 Players)</option>
+                    <option value={4}>Squad (4 Players)</option>
                   </select>
                 </div>
               </div>
@@ -547,7 +567,12 @@ export default function CreateMatchTab() {
               <div key={match.id} className="bg-muted/20 border border-border rounded-xl p-4 flex flex-col gap-3">
                 <div className="flex items-center justify-between flex-wrap gap-3">
                   <div className="min-w-0 flex-1">
-                    <h4 className="font-bold text-sm text-foreground truncate">{match.title}</h4>
+                    <div className="flex items-center gap-2">
+                      <h4 className="font-bold text-sm text-foreground truncate">{match.title}</h4>
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-neon-cyan/20 text-neon-cyan uppercase">
+                        {match.matchType || (match.maxSquadSize === 4 ? 'Squad' : match.maxSquadSize === 2 ? 'Duo' : 'Solo')}
+                      </span>
+                    </div>
                     <p className="text-xs text-muted-foreground mt-0.5">
                       {match.mode} • Map: {match.map} • Time: {match.time} • Status: <span className="text-neon-cyan font-bold">{match.status}</span>
                     </p>
@@ -565,7 +590,6 @@ export default function CreateMatchTab() {
                   </div>
                   
                   <div className="flex items-center gap-2 flex-wrap">
-                    {/* Edit Prizes & Room ID Button */}
                     <button
                       onClick={() => {
                         if (editingMatchId === match.id) {
@@ -578,7 +602,7 @@ export default function CreateMatchTab() {
                       }}
                       className="bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-400 border border-cyan-500/40 px-3 py-2 rounded-lg text-xs font-bold tracking-wider transition flex items-center gap-1.5 cursor-pointer"
                     >
-                      <Edit3 size={14} /> {editingMatchId === match.id ? 'Close Edit Box' : '✏️ Edit Prizes & Room ID'}
+                      <Edit3 size={14} /> {editingMatchId === match.id ? 'Close Edit Box' : '✏️ Edit Match'}
                     </button>
 
                     {match.status !== 'Live' ? (
@@ -594,7 +618,6 @@ export default function CreateMatchTab() {
                       </span>
                     )}
 
-                    {/* Delete Match Button */}
                     <button
                       onClick={() => handleDeleteMatch(match.id)}
                       className="bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/30 p-2 rounded-lg text-xs transition flex items-center justify-center cursor-pointer"
@@ -605,12 +628,12 @@ export default function CreateMatchTab() {
                   </div>
                 </div>
 
-                {/* Inline Edit Panel for Prizes & Room Credentials */}
+                {/* Inline Edit Panel */}
                 {editingMatchId === match.id && tempMatch && (
                   <div className="bg-background/95 border border-neon-cyan/40 p-4 rounded-xl space-y-4 mt-2">
                     <div className="flex items-center justify-between border-b border-border pb-2">
                       <p className="text-xs font-bold text-neon-cyan uppercase tracking-wider flex items-center gap-1.5">
-                        <Trophy size={14} /> Edit Match Prizes & Room Details
+                        <Trophy size={14} /> Edit Match Details & Squad Type
                       </p>
                       <button 
                         onClick={() => setEditingMatchId(null)}
@@ -620,8 +643,8 @@ export default function CreateMatchTab() {
                       </button>
                     </div>
 
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                      <div>
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                      <div className="sm:col-span-2">
                         <label className="block text-[10px] text-muted-foreground uppercase mb-1">Match Title</label>
                         <input
                           type="text"
@@ -631,13 +654,16 @@ export default function CreateMatchTab() {
                         />
                       </div>
                       <div>
-                        <label className="block text-[10px] text-muted-foreground uppercase mb-1">Total Prize Pool (₹)</label>
-                        <input
-                          type="number"
-                          value={tempMatch.prizePool}
-                          onChange={(e) => setTempMatch({ ...tempMatch, prizePool: e.target.value })}
+                        <label className="block text-[10px] text-muted-foreground uppercase mb-1">Max Squad Size</label>
+                        <select
+                          value={tempMatch.maxSquadSize || 1}
+                          onChange={(e) => setTempMatch({ ...tempMatch, maxSquadSize: Number(e.target.value) })}
                           className="input-gaming w-full rounded px-3 py-2 text-xs bg-neutral-900 text-white border border-neutral-700"
-                        />
+                        >
+                          <option value={1}>Solo (1)</option>
+                          <option value={2}>Duo (2)</option>
+                          <option value={4}>Squad (4)</option>
+                        </select>
                       </div>
                     </div>
 
@@ -707,7 +733,7 @@ export default function CreateMatchTab() {
                       className="btn-solid-orange w-full rounded py-2.5 text-xs font-bold uppercase tracking-widest flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
                     >
                       {isUpdating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save size={14} />}
-                      Update Match Prizes & Credentials
+                      Update Match & Squad Type
                     </button>
                   </div>
                 )}

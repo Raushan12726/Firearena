@@ -1,7 +1,7 @@
 'use client';
 import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { Lock, Eye, EyeOff, AlertTriangle, Trophy, Target } from 'lucide-react';
+import { Lock, Eye, EyeOff, AlertTriangle, Trophy, Target, Users } from 'lucide-react';
 import { supabase } from '@/lib/supabaseClient';
 import { useWallet } from './WalletContext';
 
@@ -11,14 +11,17 @@ interface MatchDetailModalProps {
   initialTab?: 'info' | 'players';
 }
 
+interface PlayerInput {
+  ign: string;
+  uid: string;
+}
+
 export default function MatchDetailModal({ match, onClose, initialTab = 'info' }: MatchDetailModalProps) {
   const { balance, fetchWalletBalance } = useWallet() as any; 
   const walletBalance = balance || 0; 
 
   const [activeTab, setActiveTab] = useState<'info' | 'players'>(initialTab);
   const [registeredPlayers, setRegisteredPlayers] = useState<any[]>([]);
-  const [playerName, setPlayerName] = useState('');
-  const [playerUID, setPlayerUID] = useState('');
   const [joining, setJoining] = useState(false);
   const [joined, setJoined] = useState(false);
   const [mounted, setMounted] = useState(false);
@@ -28,6 +31,23 @@ export default function MatchDetailModal({ match, onClose, initialTab = 'info' }
   const [currentMatchData, setCurrentMatchData] = useState<any>(match);
 
   const entryFee = Number(match?.entry_fee || match?.entryFee) || 0;
+
+  // Determine required player count based on max_squad_size or match type
+  const getRequiredPlayerCount = (): number => {
+    const squadSize = Number(match?.max_squad_size || match?.maxSquadSize || 0);
+    if (squadSize > 0) return squadSize;
+    const typeStr = (match?.matchType || match?.type || match?.mode || '').toString().toLowerCase();
+    if (typeStr.includes('duo') || typeStr === '2') return 2;
+    if (typeStr.includes('squad') || typeStr === '4') return 4;
+    return 1;
+  };
+
+  const playerCount = getRequiredPlayerCount();
+
+  // Dynamic player input state for 1, 2, or 4 players
+  const [players, setPlayers] = useState<PlayerInput[]>(() =>
+    Array.from({ length: playerCount }, () => ({ ign: '', uid: '' }))
+  );
 
   // Prizes Extractions with fallbacks
   const firstPlace = currentMatchData?.first_place ?? currentMatchData?.first_prize ?? match?.first_prize ?? match?.firstPlace ?? 0;
@@ -68,15 +88,12 @@ export default function MatchDetailModal({ match, onClose, initialTab = 'info' }
       }
     };
 
-    // Initial fetch
     fetchParticipants();
 
-    // Auto-refresh interval (Polling har 3 seconds mein) taaki rank aur prize turant update ho
     const interval = setInterval(() => {
       fetchParticipants();
     }, 3000);
 
-    // Real-time listener
     const channel = supabase
       .channel(`match-participants-${match.id}`)
       .on(
@@ -109,10 +126,23 @@ export default function MatchDetailModal({ match, onClose, initialTab = 'info' }
     };
   }, [match?.id]);
 
+  const handleInputChange = (index: number, field: 'ign' | 'uid', value: string) => {
+    const updated = [...players];
+    updated[index][field] = value;
+    setPlayers(updated);
+  };
+
   const handleFormSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg(null);
-    if (!playerName || !playerUID) return;
+
+    // Validate all player fields
+    for (let i = 0; i < playerCount; i++) {
+      if (!players[i].ign.trim() || !players[i].uid.trim()) {
+        setErrorMsg(`❌ Kripya Player ${i + 1} ka In-Game Name aur Free Fire UID bharein.`);
+        return;
+      }
+    }
 
     if (walletBalance < entryFee) {
       setErrorMsg(`❌ Insufficient Balance! Match join karne ke liye ₹${entryFee} chahiye, aapke wallet mein sirf ₹${walletBalance} hain.`);
@@ -134,15 +164,17 @@ export default function MatchDetailModal({ match, onClose, initialTab = 'info' }
         throw new Error("User session nahi mila. Kripya dobara login karein.");
       }
 
+      // Check if any UID is already registered
+      const uidsToCheck = players.map(p => p.uid);
       const { data: existingCheck } = await supabase
         .from('match_participants')
         .select('*')
         .eq('match_id', match.id)
-        .or(`player_uid.eq.${playerUID},user_id.eq.${loggedInUserId}`);
+        .in('player_uid', uidsToCheck);
 
       if (existingCheck && existingCheck.length > 0) {
         setJoined(true);
-        throw new Error("Yeh Free Fire UID ya User account pehle hi is match mein registered hai!");
+        throw new Error("In mein se koi ek ya zyada Free Fire UID pehle hi is match mein registered hain!");
       }
 
       const newBalance = walletBalance - entryFee;
@@ -156,17 +188,20 @@ export default function MatchDetailModal({ match, onClose, initialTab = 'info' }
         throw new Error(`Paise cut nahi ho paye: ${walletError.message}`);
       }
 
+      // Insert all team players into Supabase
+      const participantRows = players.map((p, index) => ({
+        match_id: match.id,
+        player_name: p.ign.trim(),
+        player_uid: p.uid.trim(),
+        fee_deducted: index === 0 ? entryFee : 0, // Deduct entry fee on leader or full entry
+        user_id: loggedInUserId,
+        slot_number: index + 1,
+        is_leader: index === 0,
+      }));
+
       const { error: insertError } = await supabase
         .from('match_participants')
-        .insert([
-          {
-            match_id: match.id,
-            player_name: playerName,
-            player_uid: playerUID,
-            fee_deducted: entryFee,
-            user_id: loggedInUserId
-          }
-        ]);
+        .insert(participantRows);
 
       if (insertError) throw insertError;
 
@@ -178,7 +213,7 @@ export default function MatchDetailModal({ match, onClose, initialTab = 'info' }
               user_id: loggedInUserId,
               type: 'Match Join',
               amount: -entryFee,
-              description: `Joined match: ${match.title || 'Tournament'}`,
+              description: `Joined match: ${match.title || 'Tournament'} (${playerCount === 2 ? 'Duo' : playerCount === 4 ? 'Squad' : 'Solo'})`,
               created_at: new Date().toISOString()
             }
           ]);
@@ -195,8 +230,8 @@ export default function MatchDetailModal({ match, onClose, initialTab = 'info' }
         ]));
       }
 
-      localStorage.setItem(`match_${match.id}_uid`, playerUID);
-      localStorage.setItem('user_uid', playerUID);
+      localStorage.setItem(`match_${match.id}_uid`, players[0].uid);
+      localStorage.setItem('user_uid', players[0].uid);
 
       const currentFilled = Number(match.filled_slots || match.filledSlots || 0) + 1;
       await supabase
@@ -208,10 +243,9 @@ export default function MatchDetailModal({ match, onClose, initialTab = 'info' }
         fetchWalletBalance();
       }
 
-      setRegisteredPlayers(prev => [...prev, { player_name: playerName, player_uid: playerUID, user_id: loggedInUserId }]);
+      setRegisteredPlayers(prev => [...prev, ...participantRows]);
       setJoined(true);
-      setPlayerName('');
-      setPlayerUID('');
+      setPlayers(Array.from({ length: playerCount }, () => ({ ign: '', uid: '' })));
 
       window.location.reload();
     } catch (err: any) {
@@ -237,7 +271,9 @@ export default function MatchDetailModal({ match, onClose, initialTab = 'info' }
         {/* Header */}
         <div className="p-4 border-b border-neutral-800 flex justify-between items-center bg-neutral-950/40">
           <div>
-            <span className="text-[10px] font-bold text-orange-500 bg-orange-500/10 px-2 py-0.5 rounded uppercase">{match.mode}</span>
+            <span className="text-[10px] font-bold text-orange-500 bg-orange-500/10 px-2 py-0.5 rounded uppercase">
+              {match.mode} • {playerCount === 2 ? 'DUO (2 PLAYERS)' : playerCount === 4 ? 'SQUAD (4 PLAYERS)' : 'SOLO'}
+            </span>
             <h3 className="text-base font-bold text-white mt-1">{match.title}</h3>
           </div>
           <button type="button" onClick={onClose} className="text-neutral-400 hover:text-white text-sm bg-neutral-800 px-3 py-1.5 rounded-lg transition-colors cursor-pointer">✕ Close</button>
@@ -255,7 +291,7 @@ export default function MatchDetailModal({ match, onClose, initialTab = 'info' }
           <button type="button" onClick={() => setActiveTab('players')} className={`flex-1 py-3 font-bold text-center ${activeTab === 'players' ? 'text-cyan-400 border-b-2 border-cyan-400 bg-neutral-800/10' : 'text-neutral-400'}`}>Players ({registeredPlayers.length})</button>
         </div>
 
-        <div className="p-4 max-h-[50vh] overflow-y-auto">
+        <div className="p-4 max-h-[60vh] overflow-y-auto">
           {activeTab === 'info' && (
             <div className="space-y-4">
               
@@ -323,7 +359,6 @@ export default function MatchDetailModal({ match, onClose, initialTab = 'info' }
                   </div>
                 </div>
 
-                {/* Per Kill Bonus */}
                 {Number(perKill) > 0 && (
                   <div className="bg-neutral-900/50 p-2 rounded-lg border border-neutral-800/80 flex items-center justify-between text-xs mt-1">
                     <span className="text-neutral-400 flex items-center gap-1.5 text-[11px]">
@@ -351,13 +386,41 @@ export default function MatchDetailModal({ match, onClose, initialTab = 'info' }
                 </div>
               )}
 
+              {/* DYNAMIC FORM INPUTS FOR SOLO / DUO / SQUAD */}
               {!joined && (
-                <form onSubmit={handleFormSubmit} className="space-y-3 bg-neutral-950 p-3 rounded-xl border border-neutral-800">
-                  <p className="text-xs font-bold text-neutral-300">Enter Details to Join:</p>
-                  <input type="text" placeholder="In-Game Name" value={playerName} onChange={e => setPlayerName(e.target.value)} className="w-full bg-neutral-900 border border-neutral-800 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-orange-500" required />
-                  <input type="text" placeholder="Free Fire UID" value={playerUID} onChange={e => setPlayerUID(e.target.value)} className="w-full bg-neutral-900 border border-neutral-800 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-orange-500" required />
-                  <button type="submit" disabled={joining} className="w-full bg-gradient-to-r from-orange-500 to-red-600 text-white font-bold py-2.5 rounded-lg text-xs hover:opacity-90 cursor-pointer">
-                    {joining ? 'Processing...' : 'Proceed to Join'}
+                <form onSubmit={handleFormSubmit} className="space-y-3 bg-neutral-950 p-3.5 rounded-xl border border-neutral-800">
+                  <div className="flex items-center justify-between">
+                    <p className="text-xs font-bold text-cyan-400 flex items-center gap-1.5">
+                      <Users size={14} /> Enter Details for {playerCount === 2 ? 'Duo Team (2 Players)' : playerCount === 4 ? 'Squad Team (4 Players)' : 'Solo Player'}:
+                    </p>
+                  </div>
+
+                  {players.map((player, idx) => (
+                    <div key={idx} className="bg-neutral-900/80 p-3 rounded-lg border border-neutral-800 space-y-2">
+                      <p className="text-[11px] font-bold text-orange-400">
+                        Player {idx + 1} {idx === 0 ? '(Team Leader)' : ''}
+                      </p>
+                      <input 
+                        type="text" 
+                        placeholder={`Player ${idx + 1} In-Game Name`} 
+                        value={player.ign} 
+                        onChange={e => handleInputChange(idx, 'ign', e.target.value)} 
+                        className="w-full bg-neutral-950 border border-neutral-800 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-orange-500" 
+                        required 
+                      />
+                      <input 
+                        type="text" 
+                        placeholder={`Player ${idx + 1} Free Fire UID`} 
+                        value={player.uid} 
+                        onChange={e => handleInputChange(idx, 'uid', e.target.value)} 
+                        className="w-full bg-neutral-950 border border-neutral-800 rounded-lg px-3 py-2 text-xs text-white font-mono focus:outline-none focus:border-orange-500" 
+                        required 
+                      />
+                    </div>
+                  ))}
+
+                  <button type="submit" disabled={joining} className="w-full bg-gradient-to-r from-orange-500 to-red-600 text-white font-bold py-2.5 rounded-lg text-xs hover:opacity-90 cursor-pointer mt-2">
+                    {joining ? 'Processing...' : `Proceed to Join (₹${entryFee})`}
                   </button>
                 </form>
               )}

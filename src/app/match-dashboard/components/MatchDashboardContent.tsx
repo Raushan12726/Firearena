@@ -27,6 +27,7 @@ const AVATAR_MAP: Record<string, string> = {
 
 export type MatchMode = 'Classic' | 'Clash Squad' | 'Custom' | 'Battle Royale';
 export type MatchStatus = 'Registration Open' | 'Upcoming' | 'Live' | 'Completed' | 'Room Sent';
+export type MatchType = 'solo' | 'duo' | 'squad';
 
 export interface Match {
   id: string;
@@ -49,6 +50,8 @@ export interface Match {
   roomId?: string;
   roomPassword?: string;
   isRegistered?: boolean;
+  matchType?: MatchType;
+  type?: MatchType;
 }
 
 interface UserProfile {
@@ -63,6 +66,10 @@ export default function MatchDashboardContent() {
   const [walletOpen, setWalletOpen] = useState(false);
   const [profileDropdownOpen, setProfileDropdownOpen] = useState(false);
 
+  // Live DateTime & Players Count State
+  const [currentDateTime, setCurrentDateTime] = useState('');
+  const [onlinePlayers, setOnlinePlayers] = useState(48293);
+
   // Dynamic User State
   const [user, setUser] = useState<UserProfile>({
     name: 'Loading...',
@@ -71,10 +78,42 @@ export default function MatchDashboardContent() {
     avatar: '🎯',
   });
 
-  // Fetch Logged-in User Data & Sync Matches from Supabase
+  // Live Clock & Player Count Effect
+  useEffect(() => {
+    const updateDateTime = () => {
+      const now = new Date();
+      const options: Intl.DateTimeFormatOptions = {
+        day: '2-digit',
+        month: 'short',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: true,
+        timeZone: 'Asia/Kolkata',
+      };
+      setCurrentDateTime(now.toLocaleString('en-IN', options) + ' IST');
+    };
+
+    updateDateTime();
+    const timer = setInterval(updateDateTime, 1000);
+
+    const playerTimer = setInterval(() => {
+      setOnlinePlayers((prev) => {
+        const change = Math.floor(Math.random() * 11) - 5;
+        return Math.max(40000, prev + change);
+      });
+    }, 5000);
+
+    return () => {
+      clearInterval(timer);
+      clearInterval(playerTimer);
+    };
+  }, []);
+
+  // Fetch Logged-in User Data & Sync Matches with exact match_participants count
   useEffect(() => {
     const loadUserDataAndMatches = async () => {
-      // 1. Fetch live user session from Supabase
       const { data: { user: supabaseUser } } = await supabase.auth.getUser();
 
       if (supabaseUser) {
@@ -89,7 +128,6 @@ export default function MatchDashboardContent() {
           avatar: avatarEmoji,
         });
       } else {
-        // 2. Fallback to localStorage
         const storedUser = localStorage.getItem('firearena_user');
         if (storedUser) {
           try {
@@ -109,7 +147,6 @@ export default function MatchDashboardContent() {
         }
       }
 
-      // 3. Fetch Matches directly from Supabase and sync with localStorage for MatchGrid
       try {
         const { data: dbMatches, error } = await supabase
           .from('matches')
@@ -119,11 +156,14 @@ export default function MatchDashboardContent() {
         if (!error && dbMatches) {
           const formattedMatches: Match[] = await Promise.all(
             dbMatches.map(async (m: any) => {
-              // Count filled slots from match_players or match_participants
-              const { count } = await supabase
-                .from('match_players')
+              // Correct table name 'match_participants' used here
+              const { count, error: countErr } = await supabase
+                .from('match_participants')
                 .select('*', { count: 'exact', head: true })
                 .eq('match_id', m.id);
+
+              const actualFilledSlots = !countErr && count !== null ? count : Number(m.filled_slots || 0);
+              const resolvedType = (m.match_type || m.matchType || m.type || 'solo').toLowerCase() as MatchType;
 
               return {
                 id: String(m.id),
@@ -133,7 +173,7 @@ export default function MatchDashboardContent() {
                 entryFee: Number(m.entry_fee || 0),
                 prizePool: Number(m.prize_pool || 0),
                 totalSlots: Number(m.total_slots || 50),
-                filledSlots: count || Number(m.filled_slots || 0),
+                filledSlots: actualFilledSlots,
                 date: m.date || 'Today',
                 time: m.time || m.start_time || '00:00',
                 map: m.map || 'Bermuda',
@@ -143,13 +183,14 @@ export default function MatchDashboardContent() {
                 thirdPlace: Number(m.third_place || 0),
                 roomId: m.room_id || '',
                 roomPassword: m.room_password || '',
+                matchType: resolvedType,
+                type: resolvedType,
               };
             })
           );
 
-          // Save to localStorage so MatchGrid can render them smoothly
           localStorage.setItem('firearena_matches', JSON.stringify(formattedMatches));
-          window.dispatchEvent(new Event('storage')); // Trigger update event if needed
+          window.dispatchEvent(new Event('storage'));
         }
       } catch (err) {
         console.error('Error fetching matches from Supabase:', err);
@@ -158,7 +199,22 @@ export default function MatchDashboardContent() {
 
     loadUserDataAndMatches();
 
-    // Listen for Auth state changes
+    // ─── REALTIME SUBSCRIPTION TO SYNC LIVE PARTICIPANTS ─────────────────────
+    const realtimeChannel = supabase
+      .channel('public:match_participants_changes')
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'match_participants',
+        },
+        () => {
+          loadUserDataAndMatches();
+        }
+      )
+      .subscribe();
+
     const { data: authListener } = supabase.auth.onAuthStateChange((_event, session) => {
       if (session?.user) {
         const metadata = session.user.user_metadata || {};
@@ -176,6 +232,7 @@ export default function MatchDashboardContent() {
 
     return () => {
       authListener.subscription.unsubscribe();
+      supabase.removeChannel(realtimeChannel);
     };
   }, []);
 
@@ -187,7 +244,7 @@ export default function MatchDashboardContent() {
   };
 
   return (
-    <div className="max-w-screen-2xl mx-auto px-4 lg:px-8 xl:px-10 2xl:px-16 py-6">
+    <div className="max-w-screen-2xl mx-auto px-3 sm:px-6 lg:px-8 xl:px-10 2xl:px-16 py-4 sm:py-6 pb-20 sm:pb-6">
       <Toaster
         position="top-right"
         toastOptions={{
@@ -199,21 +256,21 @@ export default function MatchDashboardContent() {
         }}
       />
 
-      {/* Page Header with Profile & Logout */}
-      <div className="flex items-center justify-between mb-6">
+      {/* Responsive Page Header */}
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
         <div>
-          <h1 className="font-display text-3xl font-bold text-foreground tracking-wider">
+          <h1 className="font-display text-2xl sm:text-3xl font-bold text-foreground tracking-wider">
             MATCH <span className="text-gradient-cyan">DASHBOARD</span>
           </h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            20 Jul 2026 • 08:15 IST • <span className="text-neon-green">48,293 players online</span>
+          <p className="text-xs sm:text-sm text-muted-foreground mt-1">
+            {currentDateTime || 'Loading time...'} • <span className="text-neon-green font-semibold">{onlinePlayers.toLocaleString()} players online</span>
           </p>
         </div>
 
-        <div className="flex items-center gap-4">
+        <div className="flex items-center justify-between sm:justify-end gap-3 w-full md:w-auto">
           <button
             onClick={() => setWalletOpen(true)}
-            className="btn-neon-orange rounded-lg px-4 py-2.5 font-display font-bold tracking-wider text-sm flex items-center gap-2 cursor-pointer"
+            className="btn-neon-orange rounded-lg px-3 sm:px-4 py-2 sm:py-2.5 font-display font-bold tracking-wider text-xs sm:text-sm flex items-center gap-2 cursor-pointer"
           >
             + Add Funds
           </button>
@@ -222,25 +279,23 @@ export default function MatchDashboardContent() {
           <div className="relative">
             <button
               onClick={() => setProfileDropdownOpen(!profileDropdownOpen)}
-              className="flex items-center gap-3 bg-card border border-border rounded-xl px-3 py-2 hover:bg-muted/50 transition cursor-pointer"
+              className="flex items-center gap-2 sm:gap-3 bg-card border border-border rounded-xl px-2.5 py-1.5 sm:px-3 sm:py-2 hover:bg-muted/50 transition cursor-pointer"
             >
-              {/* Selected Avatar */}
-              <div className="w-9 h-9 rounded-lg bg-cyan-500/20 border border-cyan-500/40 flex items-center justify-center text-lg">
+              <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-lg bg-cyan-500/20 border border-cyan-500/40 flex items-center justify-center text-base sm:text-lg">
                 {user.avatar}
               </div>
-              <div className="text-left hidden sm:block">
-                <p className="text-xs font-bold text-foreground leading-tight">{user.name}</p>
+              <div className="text-left">
+                <p className="text-xs font-bold text-foreground leading-tight max-w-[100px] truncate">{user.name}</p>
                 <p className="text-[10px] text-muted-foreground leading-tight">UID: {user.uid}</p>
               </div>
-              <span className="text-xs text-muted-foreground ml-1">▼</span>
+              <span className="text-[10px] sm:text-xs text-muted-foreground ml-1">▼</span>
             </button>
 
-            {/* Dropdown Menu (Profile Info + Logout) */}
             {profileDropdownOpen && (
-              <div className="absolute right-0 mt-2 w-64 bg-card border border-border rounded-xl shadow-xl py-3 px-4 z-50 space-y-3">
+              <div className="absolute right-0 mt-2 w-60 sm:w-64 bg-card border border-border rounded-xl shadow-xl py-3 px-4 z-50 space-y-3">
                 <div className="border-b border-border pb-3">
                   <p className="text-xs text-muted-foreground">Signed in as</p>
-                  <p className="text-sm font-bold text-foreground truncate">{user.email}</p>
+                  <p className="text-xs sm:text-sm font-bold text-foreground truncate">{user.email}</p>
                   <div className="mt-2 text-xs bg-muted/60 rounded-lg p-2 space-y-1">
                     <p className="text-foreground"><span className="text-muted-foreground">Name:</span> {user.name}</p>
                     <p className="text-foreground"><span className="text-muted-foreground">UID:</span> {user.uid}</p>
@@ -259,20 +314,43 @@ export default function MatchDashboardContent() {
         </div>
       </div>
 
-      {/* Main Grid */}
+      {/* Main Responsive Grid */}
       <div className="grid grid-cols-1 xl:grid-cols-4 2xl:grid-cols-4 gap-6">
-        {/* Left: Matches */}
-        <div className="xl:col-span-3 space-y-5">
+        {/* Left Section: Filters & Matches */}
+        <div className="xl:col-span-3 space-y-5 overflow-x-hidden">
           <MatchFilters activeFilter={activeFilter} onFilter={setActiveFilter} />
           <MatchGrid activeFilter={activeFilter} />
         </div>
 
-        {/* Right: Sidebar Panels */}
+        {/* Right Section: Sidebar Panels */}
         <div className="xl:col-span-1 space-y-5">
           <WalletWidget onAddFunds={() => setWalletOpen(true)} />
           <LeaderboardPanel />
+
+          {/* Desktop Customer Support Widget */}
+          <div className="hidden sm:block bg-card border border-border rounded-xl p-4 space-y-3">
+            <p className="text-xs font-bold text-muted-foreground tracking-wider uppercase">Customer Support</p>
+            <a 
+              href="https://wa.me/917260069533?text=Hi,%20Mujhe%20support%20chahiye" 
+              target="_blank"
+              rel="noopener noreferrer"
+              className="w-full bg-green-500/10 hover:bg-green-500/20 text-green-400 border border-green-500/30 rounded-lg py-2 px-3 text-xs font-bold tracking-wider transition flex items-center justify-center gap-2 cursor-pointer"
+            >
+              💬 WhatsApp Support
+            </a>
+          </div>
         </div>
       </div>
+
+      {/* Mobile Floating WhatsApp Button */}
+      <a 
+        href="https://wa.me/917260069533?text=Hi,%20Mujhe%20support%20chahiye"
+        target="_blank"
+        rel="noopener noreferrer"
+        className="sm:hidden fixed bottom-4 right-4 bg-green-500 hover:bg-green-600 text-black font-bold px-4 py-2.5 rounded-full shadow-lg z-50 flex items-center gap-2 text-xs border border-green-400"
+      >
+        💬 WhatsApp Support
+      </a>
 
       {walletOpen && <WalletTopupModal onClose={() => setWalletOpen(false)} />}
     </div>

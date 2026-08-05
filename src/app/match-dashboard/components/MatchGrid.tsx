@@ -75,7 +75,7 @@ function MatchCard({ match }: { match: Match }) {
 
   const handleJoin = async () => {
     if (joined || isFull || isCompleted || isLive) return;
-    setModalOpen(true); // Open modal to enter details
+    setModalOpen(true); // Open modal to enter details dynamically based on Solo/Duo/Squad
   };
 
   const isUserJoined = joined || match.isRegistered;
@@ -98,6 +98,8 @@ function MatchCard({ match }: { match: Match }) {
                 <span className="text-xs text-muted-foreground">{match.mode}</span>
                 <span className="text-muted-foreground/30">•</span>
                 <span className="text-xs text-muted-foreground">{match.map}</span>
+                <span className="text-muted-foreground/30">•</span>
+                <span className="text-xs font-bold text-neon-cyan uppercase">{match.matchType || match.type || 'Solo'}</span>
               </div>
             </div>
           </div>
@@ -160,7 +162,6 @@ function MatchCard({ match }: { match: Match }) {
 
         {/* Action Buttons: Room ID & Join button control */}
         <div className="flex items-center gap-2">
-          {/* Room ID button visible ONLY to registered/joined players who have room credentials */}
           {isUserJoined && match.roomId && (
             <button
               onClick={() => setShowRoom(!showRoom)}
@@ -171,7 +172,6 @@ function MatchCard({ match }: { match: Match }) {
             </button>
           )}
 
-          {/* Join Button - Locked / Registered if joined */}
           {!isCompleted && !isLive && (
             loadingStatus ? (
               <div className="flex-1 rounded-lg py-2 text-xs font-display font-bold text-muted-foreground bg-muted/30 text-center animate-pulse">
@@ -202,7 +202,6 @@ function MatchCard({ match }: { match: Match }) {
             )
           )}
 
-          {/* If match is Live and player hasn't joined */}
           {isLive && !isUserJoined && (
             <div className="flex-1 rounded-lg py-2 text-xs font-display font-bold text-neon-orange bg-neon-orange/10 border border-neon-orange/30 text-center tracking-wider">
               MATCH STARTED
@@ -216,7 +215,6 @@ function MatchCard({ match }: { match: Match }) {
           )}
         </div>
 
-        {/* Secret Room Credentials Box */}
         {showRoom && isUserJoined && match.roomId && (
           <div className="mt-3 p-3 bg-neon-cyan/5 border border-neon-cyan/30 rounded-lg animate-fade-scale">
             <p className="text-xs text-muted-foreground mb-2 flex items-center gap-1">
@@ -243,7 +241,6 @@ function MatchCard({ match }: { match: Match }) {
           </div>
         )}
 
-        {/* View Details & Click Join Players button */}
         {(!isLive || isUserJoined) ? (
           <button
             onClick={() => setModalOpen(true)}
@@ -255,7 +252,7 @@ function MatchCard({ match }: { match: Match }) {
             }}
           >
             <Users size={12} />
-            VIEW DETAILS &amp; CLICK JOIN PLAYERS
+            VIEW DETAILS &amp; JOIN PLAYERS
             <ChevronRight size={12} />
           </button>
         ) : (
@@ -322,7 +319,7 @@ export default function MatchGrid({ activeFilter }: { activeFilter: string }) {
 
   const filtered = allMatches.filter((m) => {
     if (activeFilter === 'All') return true;
-    return m.mode === activeFilter || m.status === activeFilter;
+    return m.mode === activeFilter || m.status === activeFilter || m.matchType === activeFilter;
   });
 
   if (filtered.length === 0) {
