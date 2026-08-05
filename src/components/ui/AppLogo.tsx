@@ -13,7 +13,7 @@ interface AppLogoProps {
 }
 
 const AppLogo = memo(function AppLogo({
-  src = '/assets/images/app_logo.png',
+  src = '/assets/images/garena_free_fire_india_logo.jpg',
   iconName = 'SparklesIcon',
   size = 64,
   className = '',
