@@ -88,7 +88,7 @@ export default function LeaderboardPanel() {
             <button
               key={`lb-sort-${s}`}
               onClick={() => setSort(s)}
-              className={`flex-1 text-xs py-1.5 rounded font-display font-semibold tracking-wider transition-all ${
+              className={`flex-1 text-xs py-1.5 rounded font-display font-semibold tracking-wider transition-all cursor-pointer ${
                 sort === s
                   ? 'bg-neon-cyan/15 text-neon-cyan border border-neon-cyan/30'
                   : 'text-muted-foreground hover:text-foreground bg-muted/30'
@@ -108,7 +108,7 @@ export default function LeaderboardPanel() {
         ) : leaderboardData.length > 0 ? (
           leaderboardData.map((player, idx) => {
             const rowClass = RANK_STYLE[idx + 1] ?? '';
-            const playerName = player.username || player.name || 'Anonymous';
+            const playerName = player.username || player.name || player.player_name || 'Anonymous';
             const playerAvatar = player.avatar || '🎮';
             const playerKills = player.kills || 0;
             const playerWins = player.wins || player.total_wins || 0;
