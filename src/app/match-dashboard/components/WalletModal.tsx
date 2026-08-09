@@ -108,7 +108,7 @@ export default function WalletModal({ onClose, matchId, entryFee = 0, userId, on
     const errs: { amount?: string; upiId?: string } = {};
     const amt = parseFloat(withdrawAmount);
     if (!withdrawAmount) errs.amount = 'Amount is required';
-    else if (isNaN(amt) || amt < 50) errs.amount = 'Minimum withdrawal is ₹50';
+    else if (isNaN(amt) || amt < 0) errs.amount = 'Minimum withdrawal is ₹0';
     else if (amt > availableBalance) errs.amount = `Insufficient balance. Available: ₹${availableBalance.toLocaleString('en-IN')}`;
     
     if (!withdrawUpi.trim()) {
