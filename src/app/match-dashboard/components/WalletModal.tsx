@@ -420,7 +420,7 @@ export default function WalletModal({ onClose, matchId, entryFee = 0, userId, on
               <form onSubmit={onwithdraw} className="space-y-4">
                 <div>
                   <label className="block text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-1">Withdrawal Amount (₹)</label>
-                  <p className="text-muted-foreground text-[10px] mb-2">Minimum ₹20 · Cannot exceed available balance</p>
+                  <p className="text-muted-foreground text-[10px] mb-2">Minimum ₹0 · Cannot exceed available balance</p>
                   <input
                     type="number"
                     placeholder="e.g. 200"
