@@ -8,6 +8,7 @@ import WalletWidget from './WalletWidget';
 import LeaderboardPanel from './LeaderboardPanel';
 import WalletTopupModal from './WalletModal';
 import MediaUploader from '@/components/MediaUploader';
+import { MessageCircle } from 'lucide-react';
 
 // ─── Supabase Client Initialization ──────────────────────────────────────────
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || 'YOUR_SUPABASE_URL';
@@ -60,6 +61,37 @@ interface UserProfile {
   uid: string;
   email: string;
   avatar: string;
+}
+
+// ─── WhatsApp Support Floating Button Component ─────────────────────────────
+function WhatsAppSupport() {
+  return (
+    <a
+      href="https://wa.me/917260069533?text=Hello%20Support,%20I%20need%20help%20with%20my%20FireArena%20account."
+      target="_blank"
+      rel="noopener noreferrer"
+      style={{
+        position: 'fixed',
+        bottom: '25px',
+        right: '25px',
+        backgroundColor: '#25D366',
+        color: '#FFFFFF',
+        borderRadius: '50%',
+        width: '60px',
+        height: '60px',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        boxShadow: '0 4px 15px rgba(37, 211, 102, 0.4)',
+        zIndex: 9999,
+        cursor: 'pointer',
+        transition: 'transform 0.3s ease',
+      }}
+      title="Chat with WhatsApp Support"
+    >
+      <MessageCircle size={32} />
+    </a>
+  );
 }
 
 export default function MatchDashboardContent() {
@@ -402,6 +434,9 @@ export default function MatchDashboardContent() {
         />
       )}
 
+      {/* WhatsApp Support Floating Widget */}
+      <WhatsAppSupport />
+
     </div>
   );
 }
@@ -461,7 +496,7 @@ function DynamicReelsModal({ currentUser, onClose, onOpenProfile }: { currentUse
   );
 }
 
-// ─── Individual Reel Card Component (Watch Shorts view - No Delete button here) ───
+// ─── Individual Reel Card Component ───
 function ReelCard({ item, currentUser, onOpenProfile }: { item: any; currentUser: UserProfile; onOpenProfile: (player: any) => void }) {
   const [likes, setLikes] = useState(item.likes || 0);
   const [isLiked, setIsLiked] = useState(false);
@@ -615,7 +650,7 @@ function ReelCard({ item, currentUser, onOpenProfile }: { item: any; currentUser
   );
 }
 
-// ─── PROFILE MODAL (Delete Button Available Inside Profile Full-Screen Post View) ───
+// ─── PROFILE MODAL ──────────────────────────────────────────────────────────
 function InstagramProfileModal({ player, currentUser, onClose }: { player: any; currentUser: UserProfile; onClose: () => void }) {
   const [userReels, setUserReels] = useState<any[]>([]);
   const [userMatchesPlayed, setUserMatchesPlayed] = useState(0);
@@ -862,7 +897,7 @@ function InstagramProfileModal({ player, currentUser, onClose }: { player: any; 
 
       </div>
 
-      {/* FULL SCREEN POST VIEW MODAL (Delete Button Here) */}
+      {/* FULL SCREEN POST VIEW MODAL */}
       {activePost && (
         <div className="fixed inset-0 z-[250] bg-black/95 flex items-center justify-center p-4">
           <button 
