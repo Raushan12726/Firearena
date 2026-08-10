@@ -1,8 +1,7 @@
 'use client';
 import React, { useState, useEffect } from 'react';
 import { toast } from 'sonner';
-import { Trophy, Target, Users, CheckCircle, ChevronDown, AlertTriangle, Loader2, RefreshCw } from 'lucide-react';
-// Centralized Supabase client import karein
+import { Trophy, Target, Users, CheckCircle, ChevronDown, AlertTriangle, Loader2, RefreshCw, Search, Download } from 'lucide-react';
 import { supabase } from '@/lib/supabaseClient';
 
 interface ResultPlayer {
@@ -13,6 +12,7 @@ interface ResultPlayer {
   kills: number;
   placement: number | null;
   prizeEarned: number;
+  teamId?: string;
 }
 
 interface MatchResult {
@@ -36,12 +36,13 @@ export default function DeclareResultsTab() {
   const [killInputs, setKillInputs] = useState<Record<string, number>>({});
   const [placementInputs, setPlacementInputs] = useState<Record<string, number>>({});
   const [submitting, setSubmitting] = useState<string | null>(null);
+  
+  // New States for Search & Filter
+  const [searchQuery, setSearchQuery] = useState('');
 
-  // Database se matches aur unke registered players fetch karna (Universal Sync)
   const fetchMatches = async () => {
     setLoading(true);
     try {
-      // 1. Matches Table se data laayein
       const { data: matchesData } = await supabase
         .from('matches')
         .select('*')
@@ -49,7 +50,6 @@ export default function DeclareResultsTab() {
 
       let allMatches = matchesData || [];
 
-      // Fallback to LocalStorage if Supabase is empty
       if (allMatches.length === 0) {
         allMatches = JSON.parse(localStorage.getItem('firearena_matches') || '[]');
       }
@@ -60,7 +60,6 @@ export default function DeclareResultsTab() {
         return;
       }
 
-      // 2. Har Match ke Participants fetch karein
       const formattedMatches: MatchResult[] = await Promise.all(
         allMatches.map(async (m: any) => {
           const mId = m.id;
@@ -68,15 +67,12 @@ export default function DeclareResultsTab() {
 
           let fetchedPlayers: any[] = [];
 
-          // A. Try fetching from match_participants
           let { data: partData, error: partErr } = await supabase
             .from('match_participants')
             .select('*, profiles(username, avatar, name)')
             .eq('match_id', mId);
 
-          // Agar Foreign Key Relation error aaye, toh bina profiles join ke data fetch karein
           if (partErr) {
-            console.warn("Profiles join failed, trying raw fetch:", partErr.message);
             const { data: rawPartData } = await supabase
               .from('match_participants')
               .select('*')
@@ -88,7 +84,6 @@ export default function DeclareResultsTab() {
             fetchedPlayers = partData;
           }
 
-          // B. Try match_players table if empty
           if (fetchedPlayers.length === 0) {
             let { data: playerTableData, error: playerErr } = await supabase
               .from('match_players')
@@ -108,7 +103,6 @@ export default function DeclareResultsTab() {
             }
           }
 
-          // C. Comprehensive LocalStorage check across all possible keys
           const regKeys = ['tournament_registrations', 'firearena_joined_matches', 'joined_matches', 'match_registrations', 'firearena_registrations'];
           let allLocalRegs: any[] = [];
           regKeys.forEach((key) => {
@@ -131,6 +125,7 @@ export default function DeclareResultsTab() {
               kills: r.kills || 0,
               placement: r.placement || null,
               prize_earned: r.prize_earned || 0,
+              team_id: r.team_id || r.squad_id || r.teamId || null,
             }));
           }
 
@@ -142,7 +137,36 @@ export default function DeclareResultsTab() {
             kills: Number(p.kills || 0),
             placement: p.placement !== null && p.placement !== undefined ? Number(p.placement) : null,
             prizeEarned: Number(p.prize_earned || p.prizeEarned || 0),
+            teamId: p.team_id || p.squad_id || p.team_code || p.teamId || null,
           }));
+
+          let teamSize = 1;
+          const matchType = ((m.mode || '') + " " + (m.title || '')).toLowerCase();
+          
+          if (matchType.includes('duo') || matchType.includes('2v2') || matchType.includes('duos')) {
+            teamSize = 2;
+          } else if (matchType.includes('squad') || matchType.includes('4v4') || matchType.includes('full')) {
+            teamSize = 4;
+          } else {
+            if (players.length === 2) teamSize = 2;
+            else if (players.length === 4 || players.length === 8 || players.length === 12) teamSize = 4;
+          }
+
+          const hasValidTeamIds = players.some(p => p.teamId);
+
+          if (!hasValidTeamIds && teamSize > 1) {
+            let currentTeamId = 1;
+            for (let i = 0; i < players.length; i++) {
+              players[i].teamId = `auto_team_${mIdStr}_${currentTeamId}`;
+              if ((i + 1) % teamSize === 0) {
+                currentTeamId++;
+              }
+            }
+          } else if (!hasValidTeamIds) {
+            players.forEach((p, idx) => {
+              p.teamId = `auto_team_${mIdStr}_${Math.floor(idx / 1) + 1}`;
+            });
+          }
 
           return {
             matchId: mIdStr,
@@ -182,26 +206,42 @@ export default function DeclareResultsTab() {
     setKillInputs((prev) => ({ ...prev, [playerId]: value }));
   };
 
-  const handlePlacementChange = (playerId: string, value: number) => {
-    setPlacementInputs((prev) => ({ ...prev, [playerId]: value }));
+  const handlePlacementChange = (teamPlayers: ResultPlayer[], value: number) => {
+    setPlacementInputs((prev) => {
+      const newInputs = { ...prev };
+      teamPlayers.forEach(p => {
+        newInputs[p.id] = value;
+      });
+      return newInputs;
+    });
   };
 
-  // Winner aur Kills ka Payout calculate karne ka dynamic logic
   const calculatePrize = (playerId: string, match: MatchResult): number => {
     const kills = killInputs[playerId] ?? 0;
-    const placement = placementInputs[playerId] ?? 0;
+    const player = match.players.find(p => p.id === playerId);
+    const teamId = player?.teamId || playerId;
+    const teamMembers = match.players.filter(p => (p.teamId || p.id) === teamId);
     
+    let placement: number | null = placementInputs[playerId];
+    if (placement === undefined) {
+      const memberWithInput = teamMembers.find(tm => placementInputs[tm.id] !== undefined);
+      if (memberWithInput) {
+        placement = placementInputs[memberWithInput.id];
+      } else {
+        placement = player?.placement ?? null;
+      }
+    }
+
     const killBonus = kills * match.perKill;
-    
     let placementPrize = 0;
     if (placement === 1) placementPrize = match.firstPlace;
     else if (placement === 2) placementPrize = match.secondPlace;
     else if (placement === 3) placementPrize = match.thirdPlace;
 
-    return killBonus + placementPrize;
+    const teamMembersCount = teamMembers.length > 0 ? teamMembers.length : 1;
+    return killBonus + (placementPrize / teamMembersCount);
   };
 
-  // Declare Result aur Instant Direct Wallet Credit (Fix applied for 'wallets' & 'profiles')
   const handleDeclare = async (match: MatchResult) => {
     setSubmitting(match.matchId);
 
@@ -219,14 +259,12 @@ export default function DeclareResultsTab() {
 
       for (const player of match.players) {
         const kills = killInputs[player.id] ?? player.kills ?? 0;
-        const placement = placementInputs[player.id] ?? player.placement ?? null;
-
-        // Agar inputs empty hain lekin player object mein pehle se value hai toh usko set karein
-        if (killInputs[player.id] === undefined && player.kills !== undefined) {
-          killInputs[player.id] = player.kills;
-        }
-        if (placementInputs[player.id] === undefined && player.placement !== null) {
-          placementInputs[player.id] = player.placement;
+        const teamId = player.teamId || player.id;
+        const teamMembers = match.players.filter(p => (p.teamId || p.id) === teamId);
+        let placement: number | null = placementInputs[player.id];
+        if (placement === undefined) {
+          const memberWithInput = teamMembers.find(tm => placementInputs[tm.id] !== undefined);
+          placement = memberWithInput ? placementInputs[memberWithInput.id] : (player.placement ?? null);
         }
 
         const prizeEarned = calculatePrize(player.id, match);
@@ -241,10 +279,7 @@ export default function DeclareResultsTab() {
           .update({ kills, placement, prize_earned: prizeEarned })
           .eq('id', player.id);
 
-        // Agar player ko prize mila hai aur user_id available hai
         if (prizeEarned > 0 && player.userId) {
-          
-          // 1. Wallets table se balance update karein
           const { data: walletData } = await supabase
             .from('wallets')
             .select('balance')
@@ -253,20 +288,16 @@ export default function DeclareResultsTab() {
 
           if (walletData) {
             const currentWalletBal = Number(walletData.balance || 0);
-            const newWalletBal = currentWalletBal + prizeEarned;
-
             await supabase
               .from('wallets')
-              .update({ balance: newWalletBal })
+              .update({ balance: currentWalletBal + prizeEarned })
               .eq('user_id', player.userId);
           } else {
-            // Agar wallet row nahi hai toh create kardein
             await supabase
               .from('wallets')
               .insert([{ user_id: player.userId, balance: prizeEarned }]);
           }
 
-          // 2. Profiles table bhi update karein (agar balance/stats wahan bhi store hote hain)
           const { data: profile } = await supabase
             .from('profiles')
             .select('balance, wallet_balance, earnings, kills, wins')
@@ -275,13 +306,11 @@ export default function DeclareResultsTab() {
 
           if (profile) {
             const currentBal = Number(profile.balance || profile.wallet_balance || 0);
-            const updatedBal = currentBal + prizeEarned;
-
             await supabase
               .from('profiles')
               .update({
-                balance: updatedBal,
-                wallet_balance: updatedBal,
+                balance: currentBal + prizeEarned,
+                wallet_balance: currentBal + prizeEarned,
                 earnings: Number(profile.earnings || 0) + prizeEarned,
                 kills: Number(profile.kills || 0) + kills,
                 wins: placement === 1 ? Number(profile.wins || 0) + 1 : Number(profile.wins || 0),
@@ -289,7 +318,6 @@ export default function DeclareResultsTab() {
               .eq('id', player.userId);
           }
 
-          // 3. Transactions history add karein
           await supabase
             .from('transactions')
             .insert([
@@ -304,6 +332,9 @@ export default function DeclareResultsTab() {
         }
       }
 
+      // 🔥 Leaderboard Live Update Trigger
+      window.dispatchEvent(new Event('leaderboard_updated'));
+
       toast.success(`Results declared & funds successfully added to winners' wallets! 🏆`);
       fetchMatches();
     } catch (err: any) {
@@ -313,21 +344,69 @@ export default function DeclareResultsTab() {
     }
   };
 
+  // Export Match Results to CSV
+  const exportToCSV = (match: MatchResult) => {
+    const headers = ['Player Name', 'User ID', 'Kills', 'Placement', 'Prize Earned (INR)'];
+    const rows = match.players.map(p => [
+      `"${p.name}"`,
+      `"${p.userId || 'N/A'}"`,
+      p.kills,
+      p.placement || 'N/A',
+      match.status === 'Results Declared' ? p.prizeEarned : calculatePrize(p.id, match)
+    ]);
+
+    const csvContent = "data:text/csv;charset=utf-8," + [headers.join(','), ...rows.map(e => e.join(','))].join('\n');
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement('a');
+    link.setAttribute('href', encodedUri);
+    link.setAttribute('download', `${match.title.replace(/\s+/g, '_')}_results.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    toast.success('Results exported as CSV successfully!');
+  };
+
+  // Filter matches based on search query
+  const filteredMatches = matches.map(match => {
+    if (!searchQuery.trim()) return match;
+    const query = searchQuery.toLowerCase();
+    const matchingPlayers = match.players.filter(p => 
+      p.name.toLowerCase().includes(query) || p.userId.toLowerCase().includes(query)
+    );
+    if (match.title.toLowerCase().includes(query) || matchingPlayers.length > 0) {
+      return { ...match, players: matchingPlayers.length > 0 ? matchingPlayers : match.players };
+    }
+    return null;
+  }).filter(Boolean) as MatchResult[];
+
   return (
     <div className="space-y-5">
-      {/* Top Header with Force Sync Button */}
-      <div className="flex justify-between items-center bg-card-surface p-4 rounded-xl border border-border">
+      <div className="flex flex-col md:flex-row justify-between items-center gap-3 bg-card-surface p-4 rounded-xl border border-border">
         <div>
           <p className="font-display font-bold text-foreground text-sm">Results Management</p>
           <p className="text-xs text-muted-foreground">Manage scores, view players and distribute rewards instantly</p>
         </div>
-        <button
-          onClick={fetchMatches}
-          className="flex items-center gap-2 bg-white/5 hover:bg-white/10 text-foreground px-3 py-2 rounded-lg text-xs font-semibold border border-border transition-all cursor-pointer"
-        >
-          <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
-          Force Sync Players
-        </button>
+        <div className="flex items-center gap-2 w-full md:w-auto">
+          {/* Search Input */}
+          <div className="relative flex-1 md:w-64">
+            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+            <input
+              type="text"
+              placeholder="Search player or match..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-full bg-background border border-border rounded-lg pl-9 pr-3 py-2 text-xs text-foreground focus:outline-none focus:border-neon-cyan"
+            />
+          </div>
+          <button
+            onClick={fetchMatches}
+            className="flex items-center gap-2 bg-white/5 hover:bg-white/10 text-foreground px-3 py-2 rounded-lg text-xs font-semibold border border-border transition-all cursor-pointer"
+            title="Force Sync"
+          >
+            <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
+            <span className="hidden sm:inline">Sync</span>
+          </button>
+        </div>
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
@@ -368,16 +447,25 @@ export default function DeclareResultsTab() {
           <Loader2 className="w-8 h-8 animate-spin text-neon-cyan" />
           <p className="text-sm text-muted-foreground">Fetching matches and player details...</p>
         </div>
-      ) : matches.length === 0 ? (
+      ) : filteredMatches.length === 0 ? (
         <div className="card-surface rounded-xl py-16 text-center border border-border">
           <Trophy size={36} className="text-muted-foreground mx-auto mb-3" />
-          <p className="font-display font-bold text-foreground tracking-wider">No Active Matches Found</p>
-          <p className="text-sm text-muted-foreground mt-1">First create a match from the tab above.</p>
+          <p className="font-display font-bold text-foreground tracking-wider">No Matches Found</p>
+          <p className="text-sm text-muted-foreground mt-1">Try adjusting your search query or create a match.</p>
         </div>
       ) : (
-        matches.map((match) => {
+        filteredMatches.map((match) => {
           const isExpanded = expandedMatch === match.matchId;
           const isPending = match.status === 'Pending Results';
+
+          const groupedPlayers = match.players.reduce((acc, player) => {
+            const key = player.teamId || player.id;
+            if (!acc[key]) acc[key] = [];
+            acc[key].push(player);
+            return acc;
+          }, {} as Record<string, ResultPlayer[]>);
+          
+          let teamCounter = 1;
 
           return (
             <div
@@ -386,15 +474,15 @@ export default function DeclareResultsTab() {
                 isPending ? 'border-neon-orange/30' : 'border-border'
               }`}
             >
-              <button
-                onClick={() => setExpandedMatch(isExpanded ? null : match.matchId)}
-                className="w-full flex items-center justify-between px-5 py-4 hover:bg-white/5 transition-colors cursor-pointer"
-              >
-                <div className="flex items-center gap-3">
+              <div className="w-full flex items-center justify-between px-5 py-4 hover:bg-white/5 transition-colors">
+                <button
+                  onClick={() => setExpandedMatch(isExpanded ? null : match.matchId)}
+                  className="flex items-center gap-3 flex-1 text-left cursor-pointer"
+                >
                   <div className={`w-9 h-9 rounded-lg flex items-center justify-center ${isPending ? 'bg-neon-orange/15' : 'bg-neon-green/15'}`}>
                     <Trophy size={18} className={isPending ? 'text-neon-orange' : 'text-neon-green'} />
                   </div>
-                  <div className="text-left">
+                  <div>
                     <p className="font-display font-bold text-sm text-foreground tracking-wider">{match.title}</p>
                     <div className="flex flex-wrap items-center gap-2 mt-0.5">
                       <span className="text-xs text-muted-foreground">{match.mode}</span>
@@ -404,19 +492,29 @@ export default function DeclareResultsTab() {
                       <span className="text-xs font-bold text-neon-orange">₹{match.prizePool.toLocaleString('en-IN')} Pool</span>
                     </div>
                   </div>
-                </div>
+                </button>
                 <div className="flex items-center gap-3">
+                  <button
+                    onClick={() => exportToCSV(match)}
+                    className="flex items-center gap-1.5 bg-white/5 hover:bg-white/10 text-foreground px-2.5 py-1.5 rounded-lg text-xs font-semibold border border-border transition-all cursor-pointer"
+                    title="Export CSV"
+                  >
+                    <Download size={13} />
+                    <span className="hidden sm:inline">Export</span>
+                  </button>
                   <span className={`text-xs font-bold font-display tracking-wider px-3 py-1 rounded ${
                     isPending ? 'status-live' : 'status-registration'
                   }`}>
                     {isPending ? 'PENDING' : 'DECLARED'}
                   </span>
-                  <ChevronDown
-                    size={16}
-                    className={`text-muted-foreground transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}`}
-                  />
+                  <button onClick={() => setExpandedMatch(isExpanded ? null : match.matchId)} className="cursor-pointer">
+                    <ChevronDown
+                      size={16}
+                      className={`text-muted-foreground transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}`}
+                    />
+                  </button>
                 </div>
-              </button>
+              </div>
 
               {isExpanded && (
                 <div className="border-t border-border animate-slide-up">
@@ -440,8 +538,7 @@ export default function DeclareResultsTab() {
 
                     {match.players.length === 0 ? (
                       <div className="text-center py-6 bg-background/50 rounded-lg border border-dashed border-border">
-                        <p className="text-sm text-muted-foreground mb-1">No players have joined this match yet.</p>
-                        <p className="text-xs text-neon-orange">Click "Force Sync Players" above to reload data.</p>
+                        <p className="text-sm text-muted-foreground mb-1">No players match your search filter.</p>
                       </div>
                     ) : (
                       <div className="overflow-x-auto">
@@ -455,66 +552,81 @@ export default function DeclareResultsTab() {
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-border">
-                            {match.players.map((player) => {
-                              const isDeclared = match.status === 'Results Declared';
-                              const kills = isDeclared ? player.kills : (killInputs[player.id] ?? 0);
-                              const placement = isDeclared ? (player.placement ?? 0) : (placementInputs[player.id] ?? 0);
-                              const prize = isDeclared ? player.prizeEarned : calculatePrize(player.id, match);
+                            {Object.entries(groupedPlayers).map(([teamId, teamPlayers]) => {
+                              const currentTeamNum = teamCounter++;
+                              const sharedPlacement = placementInputs[teamPlayers[0]?.id] ?? teamPlayers[0]?.placement ?? '';
 
                               return (
-                                <tr key={player.id} className="hover:bg-white/5 transition-colors">
-                                  <td className="py-3">
-                                    <div className="flex items-center gap-2.5">
-                                      <span className="text-lg">{player.avatar}</span>
-                                      <div>
-                                        <span className="font-semibold text-sm text-foreground block">{player.name}</span>
-                                        <span className="text-[10px] text-muted-foreground font-mono">UID: {player.userId || 'N/A'}</span>
-                                      </div>
-                                    </div>
-                                  </td>
-                                  <td className="py-3 text-center">
-                                    {isDeclared ? (
-                                      <span className="font-display font-bold text-neon-cyan tabular-nums">{player.kills}</span>
-                                    ) : (
-                                      <input
-                                        type="number"
-                                        min={0}
-                                        value={killInputs[player.id] ?? ''}
-                                        onChange={(e) => handleKillChange(player.id, parseInt(e.target.value) || 0)}
-                                        className="input-gaming w-16 rounded-lg px-2 py-1.5 text-center text-sm font-display font-bold mx-auto block bg-background border border-border text-foreground"
-                                        placeholder="0"
-                                      />
-                                    )}
-                                  </td>
-                                  <td className="py-3 text-center">
-                                    {isDeclared ? (
-                                      <span className="font-display font-bold text-neon-orange">
-                                        {player.placement ? (player.placement === 1 ? '🥇 #1' : player.placement === 2 ? '🥈 #2' : player.placement === 3 ? '🥉 #3' : `#${player.placement}`) : 'No Rank'}
-                                      </span>
-                                    ) : (
-                                      <select
-                                        value={placementInputs[player.id] ?? ''}
-                                        onChange={(e) => handlePlacementChange(player.id, parseInt(e.target.value) || 0)}
-                                        className="input-gaming rounded-lg px-2 py-1.5 text-sm mx-auto block w-28 bg-background border border-border text-foreground"
-                                      >
-                                        <option value="">— Rank —</option>
-                                        <option value={1}>🥇 #1 Winner</option>
-                                        <option value={2}>🥈 #2 Winner</option>
-                                        <option value={3}>🥉 #3 Winner</option>
-                                        {Array.from({ length: 47 }, (_, i) => i + 4).map((pos) => (
-                                          <option key={`pos-${player.id}-${pos}`} value={pos}>
-                                            #{pos}
-                                          </option>
-                                        ))}
-                                      </select>
-                                    )}
-                                  </td>
-                                  <td className="py-3 text-right">
-                                    <span className={`font-display font-bold tabular-nums ${prize > 0 ? 'text-neon-green' : 'text-muted-foreground'}`}>
-                                      ₹{prize.toLocaleString('en-IN')}
-                                    </span>
-                                  </td>
-                                </tr>
+                                <React.Fragment key={teamId}>
+                                  {teamPlayers.length > 1 && (
+                                    <tr className="bg-white/5 border-b border-border/50">
+                                      <td colSpan={4} className="py-2 px-3 text-xs font-bold text-neon-cyan/70 uppercase tracking-widest">
+                                        Team / Squad {currentTeamNum}
+                                      </td>
+                                    </tr>
+                                  )}
+                                  
+                                  {teamPlayers.map((player) => {
+                                    const isDeclared = match.status === 'Results Declared';
+                                    const prize = isDeclared ? player.prizeEarned : calculatePrize(player.id, match);
+
+                                    return (
+                                      <tr key={player.id} className="hover:bg-white/5 transition-colors">
+                                        <td className="py-3 pl-2">
+                                          <div className="flex items-center gap-2.5">
+                                            <span className="text-lg">{player.avatar}</span>
+                                            <div>
+                                              <span className="font-semibold text-sm text-foreground block">{player.name}</span>
+                                              <span className="text-[10px] text-muted-foreground font-mono">UID: {player.userId || 'N/A'}</span>
+                                            </div>
+                                          </div>
+                                        </td>
+                                        <td className="py-3 text-center">
+                                          {isDeclared ? (
+                                            <span className="font-display font-bold text-neon-cyan tabular-nums">{player.kills}</span>
+                                          ) : (
+                                            <input
+                                              type="number"
+                                              min={0}
+                                              value={killInputs[player.id] ?? ''}
+                                              onChange={(e) => handleKillChange(player.id, parseInt(e.target.value) || 0)}
+                                              className="input-gaming w-16 rounded-lg px-2 py-1.5 text-center text-sm font-display font-bold mx-auto block bg-background border border-border text-foreground"
+                                              placeholder="0"
+                                            />
+                                          )}
+                                        </td>
+                                        <td className="py-3 text-center">
+                                          {isDeclared ? (
+                                            <span className="font-display font-bold text-neon-orange">
+                                              {player.placement ? (player.placement === 1 ? '🥇 #1' : player.placement === 2 ? '🥈 #2' : player.placement === 3 ? '🥉 #3' : `#${player.placement}`) : 'No Rank'}
+                                            </span>
+                                          ) : (
+                                            <select
+                                              value={sharedPlacement}
+                                              onChange={(e) => handlePlacementChange(teamPlayers, parseInt(e.target.value) || 0)}
+                                              className="input-gaming rounded-lg px-2 py-1.5 text-sm mx-auto block w-28 bg-background border border-border text-foreground"
+                                            >
+                                              <option value="">— Rank —</option>
+                                              <option value={1}>🥇 #1 Winner</option>
+                                              <option value={2}>🥈 #2 Winner</option>
+                                              <option value={3}>🥉 #3 Winner</option>
+                                              {Array.from({ length: 47 }, (_, i) => i + 4).map((pos) => (
+                                                <option key={`pos-${player.id}-${pos}`} value={pos}>
+                                                  #{pos}
+                                                </option>
+                                              ))}
+                                            </select>
+                                          )}
+                                        </td>
+                                        <td className="py-3 text-right pr-2">
+                                          <span className={`font-display font-bold tabular-nums ${prize > 0 ? 'text-neon-green' : 'text-muted-foreground'}`}>
+                                            ₹{prize.toLocaleString('en-IN')}
+                                          </span>
+                                        </td>
+                                      </tr>
+                                    );
+                                  })}
+                                </React.Fragment>
                               );
                             })}
                           </tbody>

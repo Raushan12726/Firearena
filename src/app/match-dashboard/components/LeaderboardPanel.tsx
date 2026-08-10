@@ -19,8 +19,6 @@ export default function LeaderboardPanel() {
 
   useEffect(() => {
     async function fetchLeaderboard() {
-      setLoading(true);
-
       // Pehle hum saare profiles fetch kar lete hain taaki missing column ki wajah se query fail na ho
       const { data, error } = await supabase
         .from('profiles')
@@ -55,6 +53,16 @@ export default function LeaderboardPanel() {
 
     fetchLeaderboard();
 
+    // Listen for custom leaderboard update event dispatched from Admin Panel
+    const handleLeaderboardUpdate = () => {
+      fetchLeaderboard();
+    };
+
+    window.addEventListener('leaderboard_updated', handleLeaderboardUpdate);
+    
+    // Fallback: window focus par bhi data sync karega taaki admin panel se aane par turant update mile
+    window.addEventListener('focus', handleLeaderboardUpdate);
+
     // Supabase Realtime Listener
     const channel = supabase
       .channel('public:profiles_leaderboard')
@@ -68,6 +76,8 @@ export default function LeaderboardPanel() {
       .subscribe();
 
     return () => {
+      window.removeEventListener('leaderboard_updated', handleLeaderboardUpdate);
+      window.removeEventListener('focus', handleLeaderboardUpdate);
       supabase.removeChannel(channel);
     };
   }, [sort]);
